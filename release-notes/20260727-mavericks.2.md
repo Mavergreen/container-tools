@@ -1,5 +1,3 @@
-## Container Tools for Mavericks 20260727-mavericks.2
-
 A packaged, self-updating **Docker toolchain for OS X 10.9 (Mavericks)** — a signed `.pkg`, meant as a
 drop-in successor to the hand-built "Container Tools for Mavericks" DMG, with newer components and an updater.
 
