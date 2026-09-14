@@ -31,9 +31,9 @@ jobs:
         uses: ModernMavericks/shipyard/.github/actions/install@v1
       - name: Build + gate (same cmake iso build the box runs)
         run: |
-          cmake --preset iso
-          cmake --build --preset iso
-          ctest --preset iso --output-on-failure
+          shipyard-cmake --preset iso
+          shipyard-cmake --build --preset iso
+          shipyard-ctest --preset iso --output-on-failure
       - uses: actions/upload-artifact@v7
         with:
           name: boot2docker-iso

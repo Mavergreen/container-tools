@@ -136,9 +136,9 @@ jobs:
         env:
           MAVERICKS_SDK_CACHE: ${{ github.workspace }}/.sdk-cache
         run: |
-          cmake --preset cross
-          cmake --build --preset cross
-          ctest --preset cross
+          shipyard-cmake --preset cross
+          shipyard-cmake --build --preset cross
+          shipyard-ctest --preset cross
 
       # Build the Sparkle updater .app on every build (catches updater breaks on PRs). The updater must
       # NOT link any docker product (self-update circularity); its own binary is named
@@ -146,8 +146,8 @@ jobs:
       - name: Build the Sparkle updater (must not link docker)
         run: |
           # The x86_64 Sparkle slice is auto-derived from the updater's CMAKE_OSX_ARCHITECTURES.
-          cmake -S updater -B build/updater -DCMAKE_OBJC_COMPILER=/usr/bin/clang
-          cmake --build build/updater
+          shipyard-cmake -S updater -B build/updater -DCMAKE_OBJC_COMPILER=/usr/bin/clang
+          shipyard-cmake --build build/updater
           BIN=build/updater/ContainerToolsUpdater.app/Contents/MacOS/ContainerToolsUpdater
           otool -L "$BIN" | tee /tmp/o.txt
           if otool -L "$BIN" | tail -n +2 | grep -iq docker; then
@@ -155,8 +155,8 @@ jobs:
 
       - name: Build the menu-bar app
         run: |
-          cmake -S menubar -B build/menubar -DCMAKE_OBJC_COMPILER=/usr/bin/clang
-          cmake --build build/menubar
+          shipyard-cmake -S menubar -B build/menubar -DCMAKE_OBJC_COMPILER=/usr/bin/clang
+          shipyard-cmake --build build/menubar
 
       # On tags: bundle the packaging inputs into ONE tarball so executable bits (binaries, the .app's
       # Mach-Os, the signer) survive the artifact round-trip -- artifacts otherwise drop file modes.
@@ -221,8 +221,8 @@ jobs:
 
       - name: Build the boot2docker iso (same cmake iso build the box runs)
         run: |
-          cmake --preset iso
-          cmake --build --preset iso
+          shipyard-cmake --preset iso
+          shipyard-cmake --build --preset iso
           # The other half of the record (see build-macos): same commit, plus the iso's own pins.
           sh "$SHIPYARD_SCRIPTS/build-info.sh" build-info-iso.txt \
             variant=iso commit="$GITHUB_SHA" version="$(cat VERSION)" \

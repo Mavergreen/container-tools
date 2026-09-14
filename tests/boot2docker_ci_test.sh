@@ -15,7 +15,19 @@ else
   echo "boot2docker_ci_test: no PyYAML; relying on structural grep checks" >&2
 fi
 grep -q 'runs-on: ubuntu-latest' "$W" || { echo "not ubuntu-latest" >&2; exit 1; }
-grep -q 'cmake --preset iso' "$W"     || { echo "missing configure preset" >&2; exit 1; }
-grep -q 'cmake --build --preset iso' "$W" || { echo "missing build preset" >&2; exit 1; }
-grep -q 'ctest --preset iso' "$W"     || { echo "missing test preset" >&2; exit 1; }
+# Anchored at command position, deliberately: a substring match for 'cmake --preset iso' is satisfied
+# by 'shipyard-cmake --preset iso' too, so it can no longer fail -- and 'shipyard-cmake --preset iso'
+# unanchored is satisfied by a comment while the run: line says plain cmake. Assert the line.
+grep -qE '^[[:space:]]*shipyard-cmake --preset iso[[:space:]]*$' "$W" \
+  || { echo "missing configure preset" >&2; exit 1; }
+grep -qE '^[[:space:]]*shipyard-cmake --build --preset iso[[:space:]]*$' "$W" \
+  || { echo "missing build preset" >&2; exit 1; }
+grep -qE '^[[:space:]]*shipyard-ctest --preset iso([[:space:]]|$)' "$W" \
+  || { echo "missing test preset" >&2; exit 1; }
+# The other half of the same claim: nothing here may run a plain cmake/ctest/cpack. The positives
+# above still pass if someone ADDS a plain one beside them; this is what catches that.
+if grep -qE '^[[:space:]]*(cmake|ctest|cpack)([[:space:]]|$)' "$W"; then
+  echo "boot2docker.yml runs a plain cmake/ctest/cpack (only shipyard-cmake configures against shipyard)" >&2
+  exit 1
+fi
 echo "boot2docker_ci_test: OK"
