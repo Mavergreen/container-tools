@@ -227,7 +227,7 @@ ExternalProject_Add(lazydocker
   BUILD_BYPRODUCTS "${LAZY_BIN}"
 )
 
-# Fail-closed build-artifact gates (run after `cmake --build`).
+# Fail-closed build-artifact gates (run after `shipyard-cmake --build`).
 add_test(NAME compat_guard
   COMMAND sh "${MavericksShipyard_SCRIPTS}/assert_binary_compatible.sh" "${DOCKER_BIN}")
 add_test(NAME sdk_coverage
@@ -270,7 +270,7 @@ add_test(NAME sdk_coverage_lazydocker
 add_test(NAME docker_cli_unit
   COMMAND sh "${CMAKE_SOURCE_DIR}/tests/docker_cli_test.sh" "${DOCKER_BIN}")
 # These exercise the gate scripts against the built binary -> pass DOCKER_BIN so they
-# work with any build dir (cmake -B <dir>), not a hardcoded build/.
+# work with any build dir (shipyard-cmake -B <dir>), not a hardcoded build/.
 add_test(NAME compat_guard_test
   COMMAND sh "${CMAKE_SOURCE_DIR}/tests/compat_guard_test.sh" "${DOCKER_BIN}" "${MavericksShipyard_SCRIPTS}/assert_binary_compatible.sh")
 add_test(NAME sdk_coverage_test

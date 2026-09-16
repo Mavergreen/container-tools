@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 # Menu-bar app for the container-tools product. Standalone project like updater/ (built
-# on its own: `cmake -S menubar -B build/menubar`). Native ObjC, x86_64 / min-10.9.
+# on its own: `shipyard-cmake -S menubar -B build/menubar`). Native ObjC, x86_64 / min-10.9.
 set(CMAKE_OSX_DEPLOYMENT_TARGET 10.9 CACHE STRING "runs on the 10.9 box")
 set(CMAKE_OSX_ARCHITECTURES x86_64 CACHE STRING "Intel-only (10.9)")
 project(DockerMenu LANGUAGES OBJC)

@@ -5,7 +5,7 @@ set -eu
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 BIN="${1:-$ROOT/build/docker-cli/docker}"
 GUARD="${2:?assert_binary_compatible.sh path required (arg 2)}"
-[ -x "$BIN" ] || { echo "build docker-cli first (cmake --build <dir>)" >&2; exit 1; }
+[ -x "$BIN" ] || { echo "build docker-cli first (shipyard-cmake --build <dir>)" >&2; exit 1; }
 sh "$GUARD" "$BIN"
 
 # Teeth: the gate must be fail-closed, not a rubber stamp.

@@ -43,7 +43,7 @@ echo "guard says: $guard"
 CGO=1; LD="-mmacosx-version-min=10.9 -Wl,-undefined,dynamic_lookup"
 if [ "$(mavericks_docker_mode)" = native ]; then
   A="$ROOT/build/legacy-support/lib/libMacportsLegacySupport.a"
-  [ -f "$A" ] || { echo "build the shim first (cmake --build <dir>); need $A"; exit 2; }
+  [ -f "$A" ] || { echo "build the shim first (shipyard-cmake --build <dir>); need $A"; exit 2; }
   CC=${CC:-/usr/bin/clang}; LD="$A -lresolv $LD"
 else
   CC=${CC:-clang}

@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 # Cocoa/Sparkle auto-updater .app for the container-tools product. This is a SEPARATE project from
 # the docker build (the repo root is project(... LANGUAGES NONE) and guards against non-preset
-# configures); build it on its own with `cmake -S updater -B build/updater`. Native only: the product
+# configures); build it on its own with `shipyard-cmake -S updater -B build/updater`. Native only: the product
 # .pkg installs on the real 10.9 box, so the updater is x86_64 / min-10.9. It links Sparkle + Cocoa and
 # NOTHING from docker (a Sparkle host has no product code) -- the release workflow asserts that.
 set(CMAKE_OSX_DEPLOYMENT_TARGET 10.9 CACHE STRING "updater runs on the 10.9 box")

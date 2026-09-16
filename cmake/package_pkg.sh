@@ -16,7 +16,7 @@ export COPYFILE_DISABLE=1
 
 OUT=""; VER=""; DOCKER=""; COMPOSE=""; MACHINE=""; LAZY=""; ISO=""; UPD_APP=""; DOCKED=""; SYNC=""
 BOOT=""; COMMON=""; CTL=""; MIGRATE=""; GETFUSION=""; MENUBAR=""; LAUNCHAGENT=""
-SHIPYARD="${SHIPYARD_SCRIPTS:-}"; RES=""; WELCOME=""
+SHIPYARD=""; RES=""; WELCOME=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --out) OUT="$2"; shift 2;;
@@ -46,7 +46,11 @@ done
   && [ -n "$LAZY" ] && [ -n "$ISO" ] && [ -n "$UPD_APP" ] && [ -n "$DOCKED" ] && [ -n "$SYNC" ] \
   && [ -n "$BOOT" ] && [ -n "$COMMON" ] && [ -n "$CTL" ] && [ -n "$MIGRATE" ] && [ -n "$GETFUSION" ] && [ -n "$MENUBAR" ] && [ -n "$LAUNCHAGENT" ] \
   || { echo "package_pkg: need --out --version --docker --compose --machine --lazydocker --iso --updater-app --docked --sync-helper --bootstrap --common --ctl --migrate --get-fusion --menubar-app --launch-agent" >&2; exit 2; }
-[ -n "$SHIPYARD" ] || { echo "package_pkg: SHIPYARD_SCRIPTS unset (install mavericks-shipyard, or pass --msc-scripts)" >&2; exit 2; }
+if [ -z "$SHIPYARD" ]; then
+  # --msc-scripts wins when given; otherwise msc.sh takes $SHIPYARD_SCRIPTS (install@v1 exports it in
+  # CI) or asks shipyard-cmake where find_package(MavericksShipyard) lands, and exits if neither works.
+  . "$(dirname "$0")/../msc.sh"
+fi
 for f in "$DOCKER" "$COMPOSE" "$MACHINE" "$LAZY" "$ISO" "$DOCKED" "$SYNC" "$BOOT" "$COMMON" "$CTL" "$MIGRATE" "$GETFUSION" "$LAUNCHAGENT"; do [ -f "$f" ] || { echo "package_pkg: missing input: $f" >&2; exit 1; }; done
 [ -d "$UPD_APP" ] || { echo "package_pkg: no updater .app: $UPD_APP" >&2; exit 1; }
 [ -d "$MENUBAR" ] || { echo "package_pkg: no menubar .app: $MENUBAR" >&2; exit 1; }

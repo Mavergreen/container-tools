@@ -15,7 +15,20 @@ else
   echo "boot2docker_ci_test: no PyYAML; relying on structural grep checks" >&2
 fi
 grep -q 'runs-on: ubuntu-latest' "$W" || { echo "not ubuntu-latest" >&2; exit 1; }
-grep -q 'cmake --preset iso' "$W"     || { echo "missing configure preset" >&2; exit 1; }
-grep -q 'cmake --build --preset iso' "$W" || { echo "missing build preset" >&2; exit 1; }
-grep -q 'ctest --preset iso' "$W"     || { echo "missing test preset" >&2; exit 1; }
+# Anchored at command position, deliberately: 'cmake --preset iso' unanchored is satisfied by
+# 'shipyard-cmake --preset iso' too, so it could not fail. This job runs on ubuntu-latest, where
+# shipyard ships no pkg and no shipyard-cmake, so PLAIN cmake is the correct call here -- and
+# conventions check 18 skips non-macOS jobs for exactly that reason.
+grep -qE '^[[:space:]]*cmake --preset iso[[:space:]]*$' "$W" \
+  || { echo "missing configure preset" >&2; exit 1; }
+grep -qE '^[[:space:]]*cmake --build --preset iso[[:space:]]*$' "$W" \
+  || { echo "missing build preset" >&2; exit 1; }
+grep -qE '^[[:space:]]*ctest --preset iso([[:space:]]|$)' "$W" \
+  || { echo "missing test preset" >&2; exit 1; }
+# The other half: a Linux job may NOT call shipyard-cmake, which cannot exist there. The positives
+# above still pass if someone ADDS a shipyard-cmake beside them; this is what catches that.
+if grep -qE '^[[:space:]]*shipyard-(cmake|ctest|cpack)([[:space:]]|$)' "$W"; then
+  echo "boot2docker.yml runs shipyard-cmake in a ubuntu job, where the shipyard pkg does not exist" >&2
+  exit 1
+fi
 echo "boot2docker_ci_test: OK"
