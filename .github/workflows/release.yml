@@ -221,8 +221,8 @@ jobs:
 
       - name: Build the boot2docker iso (same cmake iso build the box runs)
         run: |
-          shipyard-cmake --preset iso
-          shipyard-cmake --build --preset iso
+          cmake --preset iso
+          cmake --build --preset iso
           # The other half of the record (see build-macos): same commit, plus the iso's own pins.
           sh "$SHIPYARD_SCRIPTS/build-info.sh" build-info-iso.txt \
             variant=iso commit="$GITHUB_SHA" version="$(cat VERSION)" \
