@@ -72,6 +72,9 @@ jobs:
       - name: Build out of tree
         run: echo "MAVERICKS_BUILD_ROOT=$TMPDIR/mm-build" >> "$GITHUB_ENV"
 
+      - name: Derive the cross build directory
+        run: echo "CROSS_BUILD_DIR=${TMPDIR:-/tmp}/mm-build/$(basename "$PWD")-cross" >> "$GITHUB_ENV"
+
       # The ingredient pin list is derived from repackage-on-ingredient-bump.yml's own paths, so the
       # repackage trigger and the release notes can't drift -- but a glob that matches nothing would
       # silently mean no repackage and thinner notes. Fail here instead.
@@ -150,6 +153,8 @@ jobs:
           shipyard-cmake --preset cross
           shipyard-cmake --build --preset cross
           shipyard-ctest --preset cross
+          ls -l "$CROSS_BUILD_DIR/docker-cli/docker" "$CROSS_BUILD_DIR/docker-compose/docker-compose" \
+            "$CROSS_BUILD_DIR/docker-machine/docker-machine" "$CROSS_BUILD_DIR/lazydocker/lazydocker"
 
       # Build the Sparkle updater .app on every build (catches updater breaks on PRs). The updater must
       # NOT link any docker product (self-update circularity); its own binary is named
@@ -178,7 +183,7 @@ jobs:
         if: steps.ver.outputs.publish == 'true'
         run: |
           export COPYFILE_DISABLE=1
-          CROSS="$MAVERICKS_BUILD_ROOT/container-tools-cross"
+          CROSS="$CROSS_BUILD_DIR"
           mkdir -p stage
           cp "$CROSS/docker-cli/docker"            stage/docker
           cp "$CROSS/docker-compose/docker-compose" stage/docker-compose
@@ -245,6 +250,8 @@ jobs:
         run: |
           echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
           echo "MAVERICKS_BUILD_ROOT=$RUNNER_TEMP/mm-build" >> "$GITHUB_ENV"
+      - name: Derive the iso build directory
+        run: echo "ISO_BUILD_DIR=${TMPDIR:-/tmp}/mm-build/$(basename "$PWD")-iso" >> "$GITHUB_ENV"
 
       # Resolve the version BEFORE configuring, using the run's mode -- otherwise this job derives the
       # shipped N while build-macos derives N+1, and one .pkg is built from two versions. A tag build
@@ -260,7 +267,7 @@ jobs:
         run: |
           cmake --preset iso
           cmake --build --preset iso
-          ISO_DIR="$MAVERICKS_BUILD_ROOT/container-tools-iso/boot2docker"
+          ISO_DIR="$ISO_BUILD_DIR/boot2docker"
           # The other half of the record (see build-macos): same commit, plus the iso's own pins.
           sh "$SHIPYARD_SCRIPTS/build-info.sh" build-info-iso.txt \
             variant=iso commit="$GITHUB_SHA" version="$(cat VERSION)" \
@@ -276,7 +283,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: boot2docker-iso
-          path: ${{ env.MAVERICKS_BUILD_ROOT }}/container-tools-iso/boot2docker/*
+          path: ${{ env.ISO_BUILD_DIR }}/boot2docker/*
 
   # Assemble + sign the product .pkg and render the signed appcast. Needs the mac binaries/updater and
   # the iso; runs on macos-26 for pkgbuild/productbuild.

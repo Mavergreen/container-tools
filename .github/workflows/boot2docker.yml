@@ -51,12 +51,15 @@ jobs:
         run: |
           echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
           echo "MAVERICKS_BUILD_ROOT=$RUNNER_TEMP/mm-build" >> "$GITHUB_ENV"
+      - name: Derive the iso build directory
+        run: echo "ISO_BUILD_DIR=${TMPDIR:-/tmp}/mm-build/$(basename "$PWD")-iso" >> "$GITHUB_ENV"
       - name: Build + gate (same cmake iso build the box runs)
         run: |
           cmake --preset iso
           cmake --build --preset iso
           ctest --preset iso --output-on-failure
+          ls -l "$ISO_BUILD_DIR/boot2docker"
       - uses: actions/upload-artifact@v7
         with:
           name: boot2docker-iso
-          path: ${{ env.MAVERICKS_BUILD_ROOT }}/container-tools-iso/boot2docker/boot2docker.iso
+          path: ${{ env.ISO_BUILD_DIR }}/boot2docker/boot2docker.iso
