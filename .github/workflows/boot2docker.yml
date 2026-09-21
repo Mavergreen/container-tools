@@ -29,6 +29,11 @@ jobs:
       # via find_package, so shipyard must be installed here too.
       - name: Install mavericks-shipyard
         uses: ModernMavericks/shipyard/.github/actions/install@v1
+      # spec: CMakePresets.json's iso preset -- derived from $TMPDIR the same way the preset's own
+      #       environment computes MAVERICKS_BUILD_ROOT, so this points at what the configure below
+      #       actually wrote.
+      - name: Build out of tree
+        run: echo "MAVERICKS_BUILD_ROOT=$TMPDIR/mm-build" >> "$GITHUB_ENV"
       - name: Build + gate (same cmake iso build the box runs)
         run: |
           cmake --preset iso
@@ -37,4 +42,4 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: boot2docker-iso
-          path: build-iso/boot2docker/boot2docker.iso
+          path: ${{ env.MAVERICKS_BUILD_ROOT }}/container-tools-iso/boot2docker/boot2docker.iso

@@ -52,7 +52,7 @@ message(STATUS "container-tools ${MAVERICKS_DOCKER_VERSION} — build: ${MAVERIC
 
 # Require a per-mode preset: nothing may configure into an unqualified "build/" that
 # can't tell native from cross (and would clobber the synced tree). The presets set
-# MAVERICKS_DOCKER_EXPECTED_MODE + a distinct binaryDir (build-native / build-cross).
+# MAVERICKS_DOCKER_EXPECTED_MODE + a distinct out-of-tree binaryDir.
 if(NOT DEFINED MAVERICKS_DOCKER_EXPECTED_MODE)
   message(FATAL_ERROR
     "Configure via a preset: 'cmake --preset native' on Mavericks, or "
@@ -99,7 +99,11 @@ include(ExternalProject)
 enable_testing()
 
 # --- iso mode: Docker-driven boot2docker.iso. No Go/SDK; requires a Docker daemon. ---
-set(MAVERICKS_DOCKER_SRC_CACHE "${CMAKE_SOURCE_DIR}/.srccache" CACHE PATH
+# spec: CMakePresets.json -- every preset's own environment sets MAVERICKS_BUILD_ROOT (a plain
+#       `cmake -B` configure is refused above), so this is never read empty -- and keying it there,
+#       not under CMAKE_BINARY_DIR, is what lets native/cross/iso share one clone per pinned REF
+#       instead of each mode re-cloning it.
+set(MAVERICKS_DOCKER_SRC_CACHE "$ENV{MAVERICKS_BUILD_ROOT}/container-tools-srccache" CACHE PATH
     "Shared cache dir for pinned dependency source clones")
 if(MAVERICKS_DOCKER_MODE STREQUAL "iso")
   execute_process(COMMAND docker version

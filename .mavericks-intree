@@ -1,0 +1,1 @@
+VERSION    # resolve-version.sh stamps the resolved version here; cmake configure and the Sparkle updater bundle both read it back

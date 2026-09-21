@@ -8,6 +8,7 @@ dist/
 .sdk-cache/
 .sparkle-cache/
 .ed25519-cache/
+CMakeUserPresets.json
 
 # macOS turds
 .DS_Store

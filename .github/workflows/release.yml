@@ -65,6 +65,13 @@ jobs:
       - name: Record the pre-build tree
         run: sh "$SHIPYARD_SCRIPTS/assert-tree-clean.sh" --record
 
+      # spec: mavericks-presets.json's mavericks-native/-cross environment sets MAVERICKS_BUILD_ROOT
+      #       from $penv{TMPDIR}/mm-build, and a preset's own environment overrides the real one -- so
+      #       this must derive from the SAME $TMPDIR the presets read, not from $RUNNER_TEMP, or every
+      #       reference below would point somewhere the configure step never wrote.
+      - name: Build out of tree
+        run: echo "MAVERICKS_BUILD_ROOT=$TMPDIR/mm-build" >> "$GITHUB_ENV"
+
       # The ingredient pin list is derived from repackage-on-ingredient-bump.yml's own paths, so the
       # repackage trigger and the release notes can't drift -- but a glob that matches nothing would
       # silently mean no repackage and thinner notes. Fail here instead.
@@ -110,6 +117,7 @@ jobs:
           # pinned release.
           ver="$(cat components/golang/version)"
           base="https://github.com/ModernMavericks/golang/releases/download/${ver}"
+          dl="$MAVERICKS_BUILD_ROOT/container-tools-golang-dl"; mkdir -p "$dl"; cd "$dl"
           curl -fL --retry 3 -o SHA256SUMS "$base/SHA256SUMS"
           # golang renamed its cross asset prefix go126- -> golang- at 1.26.5-mavericks.1; accept either.
           gover="${ver%%-mavericks.*}"; rev="${ver#*-}"; pkg=""; sum=""
@@ -132,12 +140,12 @@ jobs:
       - name: Cache the MacOSX10.9 SDK
         uses: actions/cache@v6
         with:
-          path: ${{ github.workspace }}/.sdk-cache
+          path: ${{ env.MAVERICKS_BUILD_ROOT }}/.sdk-cache
           key: macosx10.9-sdk-v1   # the SDK is pinned inside fetch_sdk.sh; key is stable across shipyard bumps
 
       - name: Build + gate (the SAME cmake build the Tahoe dry run runs)
         env:
-          MAVERICKS_SDK_CACHE: ${{ github.workspace }}/.sdk-cache
+          MAVERICKS_SDK_CACHE: ${{ env.MAVERICKS_BUILD_ROOT }}/.sdk-cache
         run: |
           shipyard-cmake --preset cross
           shipyard-cmake --build --preset cross
@@ -149,17 +157,17 @@ jobs:
       - name: Build the Sparkle updater (must not link docker)
         run: |
           # The x86_64 Sparkle slice is auto-derived from the updater's CMAKE_OSX_ARCHITECTURES.
-          shipyard-cmake -S updater -B build/updater -DCMAKE_OBJC_COMPILER=/usr/bin/clang
-          shipyard-cmake --build build/updater
-          BIN=build/updater/ContainerToolsUpdater.app/Contents/MacOS/ContainerToolsUpdater
+          shipyard-cmake -S updater -B "$MAVERICKS_BUILD_ROOT/container-tools-updater" -DCMAKE_OBJC_COMPILER=/usr/bin/clang
+          shipyard-cmake --build "$MAVERICKS_BUILD_ROOT/container-tools-updater"
+          BIN="$MAVERICKS_BUILD_ROOT/container-tools-updater/ContainerToolsUpdater.app/Contents/MacOS/ContainerToolsUpdater"
           otool -L "$BIN" | tee /tmp/o.txt
           if otool -L "$BIN" | tail -n +2 | grep -iq docker; then
             echo "::error::updater links a docker product (self-update circularity)"; exit 1; fi
 
       - name: Build the menu-bar app
         run: |
-          shipyard-cmake -S menubar -B build/menubar -DCMAKE_OBJC_COMPILER=/usr/bin/clang
-          shipyard-cmake --build build/menubar
+          shipyard-cmake -S menubar -B "$MAVERICKS_BUILD_ROOT/container-tools-menubar" -DCMAKE_OBJC_COMPILER=/usr/bin/clang
+          shipyard-cmake --build "$MAVERICKS_BUILD_ROOT/container-tools-menubar"
 
       - name: The build must not have written into the source tree
         run: sh "$SHIPYARD_SCRIPTS/assert-tree-clean.sh"
@@ -170,13 +178,14 @@ jobs:
         if: steps.ver.outputs.publish == 'true'
         run: |
           export COPYFILE_DISABLE=1
+          CROSS="$MAVERICKS_BUILD_ROOT/container-tools-cross"
           mkdir -p stage
-          cp build-cross/docker-cli/docker            stage/docker
-          cp build-cross/docker-compose/docker-compose stage/docker-compose
-          cp build-cross/docker-machine/docker-machine stage/docker-machine
-          cp build-cross/lazydocker/lazydocker        stage/lazydocker
-          cp -R build/updater/ContainerToolsUpdater.app stage/ContainerToolsUpdater.app
-          cp -R build/menubar/DockerMenu.app stage/DockerMenu.app
+          cp "$CROSS/docker-cli/docker"            stage/docker
+          cp "$CROSS/docker-compose/docker-compose" stage/docker-compose
+          cp "$CROSS/docker-machine/docker-machine" stage/docker-machine
+          cp "$CROSS/lazydocker/lazydocker"        stage/lazydocker
+          cp -R "$MAVERICKS_BUILD_ROOT/container-tools-updater/ContainerToolsUpdater.app" stage/ContainerToolsUpdater.app
+          cp -R "$MAVERICKS_BUILD_ROOT/container-tools-menubar/DockerMenu.app" stage/DockerMenu.app
           find stage -name '._*' -delete 2>/dev/null || true
           tar -C stage -czf packaging-inputs.tgz .
           # Record what THIS job built from. The .pkg is assembled from two independent jobs -- these
@@ -215,6 +224,12 @@ jobs:
       # clone_pinned.sh lives in shipyard; the iso build resolves it via find_package.
       - name: Install mavericks-shipyard
         uses: ModernMavericks/shipyard/.github/actions/install@v1
+
+      # spec: CMakePresets.json's iso preset -- a separate runner/checkout from build-macos, so it
+      #       needs its own MAVERICKS_BUILD_ROOT, derived from $TMPDIR the same way.
+      - name: Build out of tree
+        run: echo "MAVERICKS_BUILD_ROOT=$TMPDIR/mm-build" >> "$GITHUB_ENV"
+
       # Resolve the version BEFORE configuring, using the run's mode -- otherwise this job derives the
       # shipped N while build-macos derives N+1, and one .pkg is built from two versions. A tag build
       # needs no special case: the tag exists by now, so auto returns exactly it.
@@ -229,22 +244,23 @@ jobs:
         run: |
           cmake --preset iso
           cmake --build --preset iso
+          ISO_DIR="$MAVERICKS_BUILD_ROOT/container-tools-iso/boot2docker"
           # The other half of the record (see build-macos): same commit, plus the iso's own pins.
           sh "$SHIPYARD_SCRIPTS/build-info.sh" build-info-iso.txt \
             variant=iso commit="$GITHUB_SHA" version="$(cat VERSION)" \
             boot2docker="$(sed -n 's/^REF=//p' components/boot2docker/version)" \
             boot2docker_digest="$(sed -n 's/^DIGEST=//p' components/boot2docker/version)" \
             boot2docker_base="$(sed -n 's/^BASE=//p' components/boot2docker/version)" \
-            iso_sha256="$(shasum -a 256 build-iso/boot2docker/boot2docker.iso | cut -d' ' -f1)"
+            iso_sha256="$(shasum -a 256 "$ISO_DIR/boot2docker.iso" | cut -d' ' -f1)"
           # Put the record BESIDE the iso and upload that one directory. Listing two paths with
           # different roots makes upload-artifact root the archive at their least common ancestor, so
           # the iso would arrive at iso/build-iso/boot2docker/boot2docker.iso and package_pkg would
           # not find it -- which is exactly what happened.
-          mv build-info-iso.txt build-iso/boot2docker/
+          mv build-info-iso.txt "$ISO_DIR/"
       - uses: actions/upload-artifact@v7
         with:
           name: boot2docker-iso
-          path: build-iso/boot2docker/*
+          path: ${{ env.MAVERICKS_BUILD_ROOT }}/container-tools-iso/boot2docker/*
 
   # Assemble + sign the product .pkg and render the signed appcast. Needs the mac binaries/updater and
   # the iso; runs on macos-26 for pkgbuild/productbuild.
