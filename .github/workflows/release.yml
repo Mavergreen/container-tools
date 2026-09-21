@@ -225,10 +225,14 @@ jobs:
       - name: Install mavericks-shipyard
         uses: ModernMavericks/shipyard/.github/actions/install@v1
 
-      # spec: CMakePresets.json's iso preset -- a separate runner/checkout from build-macos, so it
-      #       needs its own MAVERICKS_BUILD_ROOT, derived from $TMPDIR the same way.
+      # platform: ubuntu-latest leaves $TMPDIR unset (unlike macos-26), and CMakePresets.json's
+      #           top-level "include" has no Linux pkg to find -- ANY --preset here would fail to
+      #           parse the file at all, for every preset in it, iso included (verified: this job's
+      #           first attempt at --preset iso did exactly that). So this job configures iso mode
+      #           directly with -D, never through --preset, and MAVERICKS_BUILD_ROOT here only has to
+      #           agree with itself -- $RUNNER_TEMP is what the brief recommends and is always set.
       - name: Build out of tree
-        run: echo "MAVERICKS_BUILD_ROOT=$TMPDIR/mm-build" >> "$GITHUB_ENV"
+        run: echo "MAVERICKS_BUILD_ROOT=$RUNNER_TEMP/mm-build" >> "$GITHUB_ENV"
 
       # Resolve the version BEFORE configuring, using the run's mode -- otherwise this job derives the
       # shipped N while build-macos derives N+1, and one .pkg is built from two versions. A tag build
@@ -242,9 +246,10 @@ jobs:
 
       - name: Build the boot2docker iso (same cmake iso build the box runs)
         run: |
-          cmake --preset iso
-          cmake --build --preset iso
-          ISO_DIR="$MAVERICKS_BUILD_ROOT/container-tools-iso/boot2docker"
+          ISO_BINARY_DIR="$MAVERICKS_BUILD_ROOT/container-tools-iso"
+          cmake -S . -B "$ISO_BINARY_DIR" -DMAVERICKS_DOCKER_EXPECTED_MODE=iso
+          cmake --build "$ISO_BINARY_DIR"
+          ISO_DIR="$ISO_BINARY_DIR/boot2docker"
           # The other half of the record (see build-macos): same commit, plus the iso's own pins.
           sh "$SHIPYARD_SCRIPTS/build-info.sh" build-info-iso.txt \
             variant=iso commit="$GITHUB_SHA" version="$(cat VERSION)" \
