@@ -62,6 +62,9 @@ jobs:
       - name: Install mavericks-shipyard
         uses: ModernMavericks/shipyard/.github/actions/install@v1
 
+      - name: Record the pre-build tree
+        run: sh "$SHIPYARD_SCRIPTS/assert-tree-clean.sh" --record
+
       # The ingredient pin list is derived from repackage-on-ingredient-bump.yml's own paths, so the
       # repackage trigger and the release notes can't drift -- but a glob that matches nothing would
       # silently mean no repackage and thinner notes. Fail here instead.
@@ -157,6 +160,9 @@ jobs:
         run: |
           shipyard-cmake -S menubar -B build/menubar -DCMAKE_OBJC_COMPILER=/usr/bin/clang
           shipyard-cmake --build build/menubar
+
+      - name: The build must not have written into the source tree
+        run: sh "$SHIPYARD_SCRIPTS/assert-tree-clean.sh"
 
       # On tags: bundle the packaging inputs into ONE tarball so executable bits (binaries, the .app's
       # Mach-Os, the signer) survive the artifact round-trip -- artifacts otherwise drop file modes.
