@@ -29,20 +29,33 @@ jobs:
       # via find_package, so shipyard must be installed here too.
       - name: Install mavericks-shipyard
         uses: ModernMavericks/shipyard/.github/actions/install@v1
-      # platform: ubuntu-latest leaves $TMPDIR unset, and CMakePresets.json's top-level "include"
-      #           names a path shipyard only installs on macOS -- a --preset here fails to parse the
-      #           whole file, iso included (verified: this job's first attempt at --preset iso did
-      #           exactly that). So this job configures iso mode directly with -D, never through
-      #           --preset, and only has to agree with itself on MAVERICKS_BUILD_ROOT --
-      #           $RUNNER_TEMP is what the brief recommends and is always set.
+      # platform: shipyard ships no Linux pkg (install@v1's own non-macOS branch), so
+      #           /usr/local/mavericks-shipyard, where CMakePresets.json's top-level "include" points,
+      #           does not exist here -- and that "include" is resolved eagerly for the WHOLE preset
+      #           file, so it broke `--preset iso` too even though iso inherits nothing from it
+      #           (verified: this job's first attempt at --preset iso failed with exactly "File not
+      #           found"). tests/boot2docker_ci_test.sh greps for the literal `cmake --preset iso`
+      #           form, so the fix is to make that path resolve, not to stop using --preset: symlink
+      #           the SAME file install@v1 already checked out for us (MavericksShipyard_DIR) into the
+      #           path the include expects.
+      - name: Reach shipyard's shared presets (no Linux pkg installs them)
+        run: |
+          sudo mkdir -p /usr/local/mavericks-shipyard/share/cmake/MavericksShipyard
+          sudo ln -sf "$MavericksShipyard_DIR/mavericks-presets.json" \
+            /usr/local/mavericks-shipyard/share/cmake/MavericksShipyard/mavericks-presets.json
+      # platform: ubuntu-latest also leaves $TMPDIR unset, and the iso preset's own environment
+      #           computes MAVERICKS_BUILD_ROOT from $penv{TMPDIR} the same way shipyard's hidden
+      #           native/cross presets do -- so TMPDIR itself, not just MAVERICKS_BUILD_ROOT, has to
+      #           be real before --preset iso runs, or its binaryDir resolves to /mm-build (root).
       - name: Build out of tree
-        run: echo "MAVERICKS_BUILD_ROOT=$RUNNER_TEMP/mm-build" >> "$GITHUB_ENV"
+        run: |
+          echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
+          echo "MAVERICKS_BUILD_ROOT=$RUNNER_TEMP/mm-build" >> "$GITHUB_ENV"
       - name: Build + gate (same cmake iso build the box runs)
         run: |
-          BINARY_DIR="$MAVERICKS_BUILD_ROOT/container-tools-iso"
-          cmake -S . -B "$BINARY_DIR" -DMAVERICKS_DOCKER_EXPECTED_MODE=iso
-          cmake --build "$BINARY_DIR"
-          ctest --test-dir "$BINARY_DIR" --output-on-failure
+          cmake --preset iso
+          cmake --build --preset iso
+          ctest --preset iso --output-on-failure
       - uses: actions/upload-artifact@v7
         with:
           name: boot2docker-iso

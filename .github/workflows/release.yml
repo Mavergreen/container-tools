@@ -225,14 +225,26 @@ jobs:
       - name: Install mavericks-shipyard
         uses: ModernMavericks/shipyard/.github/actions/install@v1
 
-      # platform: ubuntu-latest leaves $TMPDIR unset (unlike macos-26), and CMakePresets.json's
-      #           top-level "include" has no Linux pkg to find -- ANY --preset here would fail to
-      #           parse the file at all, for every preset in it, iso included (verified: this job's
-      #           first attempt at --preset iso did exactly that). So this job configures iso mode
-      #           directly with -D, never through --preset, and MAVERICKS_BUILD_ROOT here only has to
-      #           agree with itself -- $RUNNER_TEMP is what the brief recommends and is always set.
+      # platform: shipyard ships no Linux pkg, so /usr/local/mavericks-shipyard, where
+      #           CMakePresets.json's top-level "include" points, does not exist here -- and that
+      #           "include" is resolved eagerly for the whole preset file, so it breaks `--preset iso`
+      #           too even though iso inherits nothing from it (verified against this repo's
+      #           boot2docker.yml, the same job shape on the same runner OS). Symlink the SAME file
+      #           install@v1 already checked out for us (MavericksShipyard_DIR) into the path the
+      #           include expects, so this job can keep using --preset like build-macos does.
+      - name: Reach shipyard's shared presets (no Linux pkg installs them)
+        run: |
+          sudo mkdir -p /usr/local/mavericks-shipyard/share/cmake/MavericksShipyard
+          sudo ln -sf "$MavericksShipyard_DIR/mavericks-presets.json" \
+            /usr/local/mavericks-shipyard/share/cmake/MavericksShipyard/mavericks-presets.json
+
+      # platform: ubuntu-latest also leaves $TMPDIR unset, and the iso preset's own environment
+      #           computes MAVERICKS_BUILD_ROOT from $penv{TMPDIR} the same way shipyard's hidden
+      #           native/cross presets do -- so TMPDIR itself has to be real before --preset iso runs.
       - name: Build out of tree
-        run: echo "MAVERICKS_BUILD_ROOT=$RUNNER_TEMP/mm-build" >> "$GITHUB_ENV"
+        run: |
+          echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
+          echo "MAVERICKS_BUILD_ROOT=$RUNNER_TEMP/mm-build" >> "$GITHUB_ENV"
 
       # Resolve the version BEFORE configuring, using the run's mode -- otherwise this job derives the
       # shipped N while build-macos derives N+1, and one .pkg is built from two versions. A tag build
@@ -246,10 +258,9 @@ jobs:
 
       - name: Build the boot2docker iso (same cmake iso build the box runs)
         run: |
-          ISO_BINARY_DIR="$MAVERICKS_BUILD_ROOT/container-tools-iso"
-          cmake -S . -B "$ISO_BINARY_DIR" -DMAVERICKS_DOCKER_EXPECTED_MODE=iso
-          cmake --build "$ISO_BINARY_DIR"
-          ISO_DIR="$ISO_BINARY_DIR/boot2docker"
+          cmake --preset iso
+          cmake --build --preset iso
+          ISO_DIR="$MAVERICKS_BUILD_ROOT/container-tools-iso/boot2docker"
           # The other half of the record (see build-macos): same commit, plus the iso's own pins.
           sh "$SHIPYARD_SCRIPTS/build-info.sh" build-info-iso.txt \
             variant=iso commit="$GITHUB_SHA" version="$(cat VERSION)" \
