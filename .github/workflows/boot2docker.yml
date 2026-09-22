@@ -28,7 +28,7 @@ jobs:
       # clone_pinned.sh (the digest-verified git fetch) lives in shipyard; the iso build resolves it
       # via find_package, so shipyard must be installed here too.
       - name: Install mavericks-shipyard
-        uses: ModernMavericks/shipyard/.github/actions/install@v1
+        uses: Mavergreen/shipyard/.github/actions/install@v1
       # platform: shipyard ships no Linux pkg (install@v1's own non-macOS branch), so
       #           /usr/local/mavericks-shipyard, where CMakePresets.json's top-level "include" points,
       #           does not exist here -- and that "include" is resolved eagerly for the WHOLE preset

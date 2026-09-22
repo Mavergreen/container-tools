@@ -7,6 +7,6 @@ jobs:
   repackage:
     permissions:
       actions: write
-    uses: ModernMavericks/shipyard/.github/workflows/repackage-on-ingredient-bump.yml@v1
+    uses: Mavergreen/shipyard/.github/workflows/repackage-on-ingredient-bump.yml@v1
     with:
       own-upstream-paths: ""

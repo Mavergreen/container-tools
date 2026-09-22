@@ -21,7 +21,7 @@ mavericks_add_updater_app(
   NAME ContainerToolsUpdater
   PRODUCT_NAME "Mavericks Container Tools"
   BUNDLE_ID dev.modernmavericks.ContainerToolsUpdater
-  FEED_URL "https://github.com/ModernMavericks/container-tools/releases/latest/download/appcast.xml"
+  FEED_URL "https://github.com/Mavergreen/container-tools/releases/latest/download/appcast.xml"
   # EdDSA pubkey read by default from this project's updater/ed25519_key.pub (source dir is updater/).
   ICON "${CMAKE_SOURCE_DIR}/container-tools-updater.icns"
   VERSION "${MAVERICKS_DOCKER_VERSION}"

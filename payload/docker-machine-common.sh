@@ -17,7 +17,7 @@ esac
 MACHINE=container-tools
 CONTEXT=mavericks
 ISO=${MAVERICKS_DOCKER_ISO:-/usr/local/share/modernmavericks/container-tools/boot2docker.iso}
-LOG=${MAVERICKS_DOCKER_LOG:-$HOME/Library/Logs/ModernMavericks/container-tools/bootstrap.log}
+LOG=${MAVERICKS_DOCKER_LOG:-$HOME/Library/Logs/Mavergreen/container-tools/bootstrap.log}
 STATE_DIR=${MAVERICKS_DOCKER_STATE_DIR:-$HOME/Library/Application Support/ModernMavericks/container-tools}
 STATE_FILE="$STATE_DIR/state"
 LOCK="$STATE_DIR/creating.lock"

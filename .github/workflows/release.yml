@@ -60,7 +60,7 @@ jobs:
       # shipyard installs itself via its own action (self-registering in the CMake user package
       # registry); consumed thereafter via find_package. @v1 is the moving major tag (Renovate tracks it).
       - name: Install mavericks-shipyard
-        uses: ModernMavericks/shipyard/.github/actions/install@v1
+        uses: Mavergreen/shipyard/.github/actions/install@v1
 
       - name: Record the pre-build tree
         run: sh "$SHIPYARD_SCRIPTS/assert-tree-clean.sh" --record
@@ -115,11 +115,11 @@ jobs:
       - name: Install patched Go (mavericks-golang cross toolchain)
         run: |
           # Renovate bumps components/golang/version via the '# mavericks-golang' customManager in
-          # .github/renovate.json (github-releases on ModernMavericks/golang). No pinned sha256 to
+          # .github/renovate.json (github-releases on Mavergreen/golang). No pinned sha256 to
           # hand-maintain: we verify the download against golang's own published SHA256SUMS for the
           # pinned release.
           ver="$(cat components/golang/version)"
-          base="https://github.com/ModernMavericks/golang/releases/download/${ver}"
+          base="https://github.com/Mavergreen/golang/releases/download/${ver}"
           dl="$MAVERICKS_BUILD_ROOT/container-tools-golang-dl"; mkdir -p "$dl"; cd "$dl"
           curl -fL --retry 3 -o SHA256SUMS "$base/SHA256SUMS"
           # golang renamed its cross asset prefix go126- -> golang- at 1.26.5-mavericks.1; accept either.
@@ -228,7 +228,7 @@ jobs:
           fetch-depth: 0   # cmake resolves the version from the tags now, in this job too
       # clone_pinned.sh lives in shipyard; the iso build resolves it via find_package.
       - name: Install mavericks-shipyard
-        uses: ModernMavericks/shipyard/.github/actions/install@v1
+        uses: Mavergreen/shipyard/.github/actions/install@v1
 
       # platform: shipyard ships no Linux pkg, so /usr/local/mavericks-shipyard, where
       #           CMakePresets.json's top-level "include" points, does not exist here -- and that
@@ -296,7 +296,7 @@ jobs:
         with:
           fetch-depth: 0   # generated notes diff ingredient pins against the previous release tag
       - name: Install mavericks-shipyard
-        uses: ModernMavericks/shipyard/.github/actions/install@v1
+        uses: Mavergreen/shipyard/.github/actions/install@v1
       - uses: actions/download-artifact@v8
         with: { name: packaging-inputs, path: dl }
       - uses: actions/download-artifact@v8
@@ -409,7 +409,7 @@ jobs:
     permissions:
       actions: read     # this run's job logs
       contents: read
-    uses: ModernMavericks/shipyard/.github/workflows/scan-for-key.yml@v1
+    uses: Mavergreen/shipyard/.github/workflows/scan-for-key.yml@v1
     with:
       artifact: docker-pkg
     secrets:
@@ -424,7 +424,7 @@ jobs:
     needs: [build-macos, package, scan]
     permissions:
       contents: write
-    uses: ModernMavericks/shipyard/.github/workflows/publish-release.yml@v1
+    uses: Mavergreen/shipyard/.github/workflows/publish-release.yml@v1
     with:
       version: ${{ needs.build-macos.outputs.version }}
       artifact: docker-pkg

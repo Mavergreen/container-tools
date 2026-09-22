@@ -229,7 +229,7 @@ case_env_line_commented() {
   setup; make_dm; make_docker
   printf '%s\n' 'eval "$(docker-machine env default)"' > "$HOME/.bash_profile"
   MAVERICKS_DOCKER_TEST_STATUS=Running sh "$BOOT" || fail "should exit 0"
-  grep -q '^# ModernMavericks' "$HOME/.bash_profile" || fail "expected the env line commented with a marker"
+  grep -q '^# Mavergreen' "$HOME/.bash_profile" || fail "expected the env line commented with a marker"
   grep -Eq '^[[:space:]]*eval "\$\(docker-machine env default\)"' "$HOME/.bash_profile" \
     && fail "the active eval line must be gone"
   [ -f "$HOME/.bash_profile.premigrate" ] || fail "expected a one-time backup of the profile"
@@ -243,7 +243,7 @@ case_env_line_comment_idempotent() {
   MAVERICKS_DOCKER_TEST_STATUS=Running sh "$BOOT" || fail "should exit 0 (run 1)"
   cp "$HOME/.bash_profile.premigrate" "$WORK/backup-after-run1"
   MAVERICKS_DOCKER_TEST_STATUS=Running sh "$BOOT" || fail "should exit 0 (run 2)"
-  n=$(grep -c '^# ModernMavericks' "$HOME/.bash_profile")
+  n=$(grep -c '^# Mavergreen' "$HOME/.bash_profile")
   [ "$n" = 1 ] || fail "expected exactly one marker after two runs, got $n"
   cmp -s "$WORK/backup-after-run1" "$HOME/.bash_profile.premigrate" \
     || fail "backup must not be overwritten on the second run"

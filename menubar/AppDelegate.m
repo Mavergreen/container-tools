@@ -180,7 +180,7 @@
 
 - (void)showLog:(id)s {
   NSString *log = [NSHomeDirectory() stringByAppendingPathComponent:
-    @"Library/Logs/ModernMavericks/container-tools/bootstrap.log"];
+    @"Library/Logs/Mavergreen/container-tools/bootstrap.log"];
   [[NSWorkspace sharedWorkspace] openFile:log withApplication:@"Console"];
 }
 

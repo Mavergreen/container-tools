@@ -40,7 +40,7 @@ neutralize_env_override() {
     if grep -Ev '^[[:space:]]*#' "$_p" 2>/dev/null | grep -Eq 'docker-machine env'; then
       [ -f "$_p.premigrate" ] || cp "$_p" "$_p.premigrate" 2>/dev/null || true
       _tmp="$_p.mm-tmp.$$"
-      if sed -E 's|^([[:space:]]*)([^#].*docker-machine env.*)$|\1# ModernMavericks container-tools (uses docker context mavericks instead): \2|' \
+      if sed -E 's|^([[:space:]]*)([^#].*docker-machine env.*)$|\1# Mavergreen container-tools (uses docker context mavericks instead): \2|' \
            "$_p" > "$_tmp" 2>/dev/null; then
         mv -f "$_tmp" "$_p" 2>/dev/null || rm -f "$_tmp" 2>/dev/null || true
         log "commented a 'docker-machine env' line in $_p (backup: $_p.premigrate)"

@@ -20,7 +20,7 @@ All binaries are cross-built for x86_64 / min-10.9 with the patched mavericks Go
 ## Requires
 
 OS X 10.9.5 or later, plus **VMware Fusion** to run the Docker daemon. After installing, see
-<https://github.com/ModernMavericks/container-tools> for the one-line `docker-machine create` setup.
+<https://github.com/Mavergreen/container-tools> for the one-line `docker-machine create` setup.
 
 ## Note
 
