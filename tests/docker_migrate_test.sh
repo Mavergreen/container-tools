@@ -47,7 +47,7 @@ case_migrate() {
   grep -q '"Name": "container-tools"' "$nd/config.json" || fail "config top-level Name rewritten"
   grep -q "machines/container-tools" "$nd/config.json" || fail "config StorePath rewritten"
   grep -q '/default\.vmx' "$nd/config.json" && fail "config still references default.vmx"
-  grep -q '"Boot2DockerURL": "/usr/local/share/modernmavericks/container-tools/boot2docker.iso"' "$nd/config.json" \
+  grep -q '"Boot2DockerURL": "/usr/local/share/mavergreen/container-tools/boot2docker.iso"' "$nd/config.json" \
     || fail "config Boot2DockerURL must be repointed at the installed ISO (or upgrade re-fetches the old DMG)"
   grep -q '/Volumes/Docker for Mavericks' "$nd/config.json" && fail "config still points Boot2DockerURL at the old Wowfunhappy DMG"
   grep -q 'displayName = "container-tools"' "$nd/container-tools.vmx" || fail "vmx displayName rewritten"

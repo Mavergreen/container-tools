@@ -59,16 +59,16 @@ for h in stage_updater.sh set_install_floor.sh build_component_pkg.sh assert_pkg
   [ -f "$SHIPYARD/$h" ] || { echo "package_pkg: shared helper missing: $SHIPYARD/$h" >&2; exit 1; }
 done
 
-IDENT="dev.modernmavericks.container-tools"
-AGENT_LABEL="dev.modernmavericks.container-tools-updatecheck"
-UPD_APPDIR="/Library/Application Support/ModernMavericks"
+IDENT="dev.mavergreen.container-tools"
+AGENT_LABEL="dev.mavergreen.container-tools-updatecheck"
+UPD_APPDIR="/Library/Application Support/Mavergreen"
 
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/container-tools-pkg.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 stage="$WORK/stage"; scripts="$WORK/scripts"; comp="$WORK/component.pkg"
 
 # --- product payload (docker CLI + plugins + iso) ---
-mkdir -p "$stage/usr/local/bin" "$stage/usr/local/lib/docker/cli-plugins" "$stage/usr/local/share/modernmavericks/container-tools"
+mkdir -p "$stage/usr/local/bin" "$stage/usr/local/lib/docker/cli-plugins" "$stage/usr/local/share/mavergreen/container-tools"
 install -m 0755 "$DOCKER"  "$stage/usr/local/bin/docker"
 install -m 0755 "$MACHINE" "$stage/usr/local/bin/docker-machine"
 install -m 0755 "$LAZY"    "$stage/usr/local/bin/lazydocker"
@@ -78,12 +78,12 @@ install -m 0755 "$BOOT"    "$stage/usr/local/bin/docker-machine-bootstrap"
 install -m 0755 "$CTL"    "$stage/usr/local/bin/docker-machine-ctl"
 install -m 0755 "$MIGRATE" "$stage/usr/local/bin/docker-machine-migrate"
 install -m 0755 "$GETFUSION" "$stage/usr/local/bin/container-tools-get-fusion"
-mkdir -p "$stage/usr/local/libexec/modernmavericks/docker"
-install -m 0644 "$COMMON" "$stage/usr/local/libexec/modernmavericks/docker/docker-machine-common.sh"
+mkdir -p "$stage/usr/local/libexec/mavergreen/docker"
+install -m 0644 "$COMMON" "$stage/usr/local/libexec/mavergreen/docker/docker-machine-common.sh"
 # Compose v2 as a CLI plugin (enables `docker compose`), plus a standalone `docker-compose` symlink.
 install -m 0755 "$COMPOSE" "$stage/usr/local/lib/docker/cli-plugins/docker-compose"
 ln -s ../lib/docker/cli-plugins/docker-compose "$stage/usr/local/bin/docker-compose"
-install -m 0644 "$ISO"    "$stage/usr/local/share/modernmavericks/container-tools/boot2docker.iso"
+install -m 0644 "$ISO"    "$stage/usr/local/share/mavergreen/container-tools/boot2docker.iso"
 mkdir -p "$stage/Applications"
 cp -R "$MENUBAR" "$stage/Applications/Mavericks Container Tools.app"
 
@@ -91,7 +91,7 @@ cp -R "$MENUBAR" "$stage/Applications/Mavericks Container Tools.app"
 # login (the postinstall also `load`s it now); a user turns it off via the menu's "Start Docker at
 # Login" toggle (login-off = unload -w, which survives upgrades). root:wheel 0644 so launchd accepts it.
 mkdir -p "$stage/Library/LaunchAgents"
-install -m 0644 "$LAUNCHAGENT" "$stage/Library/LaunchAgents/dev.modernmavericks.container-tools-machine.plist"
+install -m 0644 "$LAUNCHAGENT" "$stage/Library/LaunchAgents/dev.mavergreen.container-tools-machine.plist"
 
 # --- updater app + LaunchAgent + postinstall (shared, hoisted) ---
 sh "$SHIPYARD/stage_updater.sh" --stage "$stage" --app "$UPD_APP" --app-dir "$UPD_APPDIR" \
@@ -102,6 +102,13 @@ sh "$SHIPYARD/stage_updater.sh" --stage "$stage" --app "$UPD_APP" --app-dir "$UP
 [ -f "$scripts/postinstall" ] || printf '#!/bin/sh\n' > "$scripts/postinstall"
 sed -i '' -e '${/^[[:space:]]*exit 0[[:space:]]*$/d;}' "$scripts/postinstall"
 cat >> "$scripts/postinstall" <<'POST'
+# ONE-TIME MIGRATION off the ModernMavericks identity (flag day 2026-09-22): retire the old VM agent,
+# the old libexec/share dirs and the old receipt, carrying a "Start Docker at Login: off" choice over
+# to the new agent. See flagday.sh (cmake/flagday-postinstall.sh), staged beside this script.
+# DELETABLE once no pre-flag-day install survives (see shipyard SKILL.md "Consolidation backlog").
+CT_FLAGDAY_LOGIN_OFF=0
+. "$(dirname "$0")/flagday.sh"
+ct_flagday_retire "$3"
 # Converge on the renamed bundle. The .pkg lays down "/Applications/Mavericks Container Tools.app",
 # but installing over a pre-rename box leaves the old "/Applications/Container Tools for Mavericks.app"
 # behind -- still the running menu-bar process and still the registered Login Item (MDLoginItem keys
@@ -121,6 +128,8 @@ if [ -n "$_uid" ] && [ "${_uid:-0}" -gt 0 ]; then
   # is actually in place. The [ -d "$NEW_APP" ] guard is the safety belt: if bundle relocation ever
   # writes the payload back onto OLD_APP (leaving NEW_APP absent), removing OLD_APP would delete the
   # app we just installed -- the exact failure that emptied /Applications on the .12 install.
+  # The identity checked is the bundle id that old app shipped with, dev.modernmavericks.DockerMenu:
+  # it predates the flag day, so it keeps the old name (a rename to dev.mavergreen.* would never match).
   NEW_APP="/Applications/Mavericks Container Tools.app"
   OLD_APP="/Applications/Container Tools for Mavericks.app"
   if [ -d "$NEW_APP" ] && [ "$OLD_APP" != "$NEW_APP" ] && [ -d "$OLD_APP" ] && \
@@ -132,8 +141,11 @@ if [ -n "$_uid" ] && [ "${_uid:-0}" -gt 0 ]; then
   launchctl asuser "$_uid" open -a "/Applications/Mavericks Container Tools.app" >/dev/null 2>&1 || true
   # Start the Docker VM now, as the console user (VM creation needs the user's Fusion/GUI session,
   # not root). Plain `load` (no -w): the plist ships enabled so a fresh install auto-starts, while a
-  # user who chose "Start Docker at Login → off" (unload -w) keeps that opt-out through upgrades.
-  launchctl asuser "$_uid" load "/Library/LaunchAgents/dev.modernmavericks.container-tools-machine.plist" >/dev/null 2>&1 || true
+  # user who chose "Start Docker at Login → off" (unload -w) keeps that opt-out through upgrades --
+  # including the flag-day one, whose new Label launchd has no record for (CT_FLAGDAY_LOGIN_OFF).
+  if [ "$CT_FLAGDAY_LOGIN_OFF" != 1 ]; then
+    launchctl asuser "$_uid" load "/Library/LaunchAgents/dev.mavergreen.container-tools-machine.plist" >/dev/null 2>&1 || true
+  fi
 fi
 exit 0
 POST
@@ -143,6 +155,9 @@ chmod +x "$scripts/postinstall"
 # time on the target; a build-host script is not). Then gate the assembled postinstall -- a GUI-app
 # relaunch must be preceded by a stop -- and confirm the staged helper parses + defines the function.
 install -m 0644 "$SHIPYARD/postinstall-stop-gui.sh" "$scripts/stop-gui.sh"
+install -m 0644 "$(dirname "$0")/flagday-postinstall.sh" "$scripts/flagday.sh"
+sh -c '. "$1"; command -v ct_flagday_retire >/dev/null' _ "$scripts/flagday.sh" \
+  || { echo "package_pkg: staged flagday.sh does not define ct_flagday_retire" >&2; exit 1; }
 sh "$SHIPYARD/assert_gui_relaunch_safe.sh" "$scripts/postinstall" >&2
 sh -n "$scripts/postinstall" || { echo "package_pkg: assembled postinstall has a syntax error" >&2; exit 1; }
 sh -c '. "$1"; command -v mav_stop_gui_instance >/dev/null' _ "$scripts/stop-gui.sh" \

@@ -104,9 +104,9 @@ case_login() {
   stub_launchctl 1
   [ "$(sh "$CTL" login-status)" = off ] || fail "not loaded -> off"
   sh "$CTL" login-on >/dev/null
-  grep -q 'load -w /Library/LaunchAgents/dev.modernmavericks.container-tools-machine.plist' "$LC_LOG" || fail "login-on loads the plist"
+  grep -q 'load -w /Library/LaunchAgents/dev.mavergreen.container-tools-machine.plist' "$LC_LOG" || fail "login-on loads the plist"
   sh "$CTL" login-off >/dev/null
-  grep -q 'unload -w /Library/LaunchAgents/dev.modernmavericks.container-tools-machine.plist' "$LC_LOG" || fail "login-off unloads the plist"
+  grep -q 'unload -w /Library/LaunchAgents/dev.mavergreen.container-tools-machine.plist' "$LC_LOG" || fail "login-off unloads the plist"
   teardown
 }
 case_vmxpid() {
@@ -134,7 +134,7 @@ EOF
 case_packaging() {
   grep -q -- '--common' "$ROOT/cmake/package_pkg.sh" || fail "package_pkg.sh needs --common"
   grep -q -- '--ctl' "$ROOT/cmake/package_pkg.sh" || fail "package_pkg.sh needs --ctl"
-  grep -q 'usr/local/libexec/modernmavericks/docker/docker-machine-common.sh' "$ROOT/cmake/package_pkg.sh" \
+  grep -q 'usr/local/libexec/mavergreen/docker/docker-machine-common.sh' "$ROOT/cmake/package_pkg.sh" \
     || fail "package_pkg.sh must install docker-machine-common.sh"
   grep -q 'usr/local/bin/docker-machine-ctl' "$ROOT/cmake/package_pkg.sh" \
     || fail "package_pkg.sh must install docker-machine-ctl"

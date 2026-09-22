@@ -6,7 +6,7 @@ static NSString * const kCtl = @"/usr/local/bin/docker-machine-ctl";
 
 - (NSString *)stateFilePath {
   NSString *base = [NSHomeDirectory()
-    stringByAppendingPathComponent:@"Library/Application Support/ModernMavericks/container-tools"];
+    stringByAppendingPathComponent:@"Library/Application Support/Mavergreen/container-tools"];
   return [base stringByAppendingPathComponent:@"state"];
 }
 

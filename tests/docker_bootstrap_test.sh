@@ -324,9 +324,9 @@ case_stale_lock
 
 # --- Case: packaging references are consistent ---
 case_packaging() {
-  grep -q '/usr/local/bin/docker-machine-bootstrap' "$ROOT/payload/dev.modernmavericks.container-tools-machine.plist" \
+  grep -q '/usr/local/bin/docker-machine-bootstrap' "$ROOT/payload/dev.mavergreen.container-tools-machine.plist" \
     || fail "plist must launch docker-machine-bootstrap"
-  grep -q 'docker-machine-ensure-default' "$ROOT/payload/dev.modernmavericks.container-tools-machine.plist" \
+  grep -q 'docker-machine-ensure-default' "$ROOT/payload/dev.mavergreen.container-tools-machine.plist" \
     && fail "plist still references the old guard"
   grep -q -- '--bootstrap' "$ROOT/cmake/package_pkg.sh" || fail "package_pkg.sh missing --bootstrap"
   grep -q 'install -m 0755 "\$BOOT"' "$ROOT/cmake/package_pkg.sh" \

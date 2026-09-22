@@ -5,7 +5,7 @@ set -eu
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 fail() { echo "auto_setup_test: FAIL: $*" >&2; exit 1; }
 
-PLIST="$ROOT/payload/dev.modernmavericks.container-tools-machine.plist"
+PLIST="$ROOT/payload/dev.mavergreen.container-tools-machine.plist"
 
 # Agent must NOT ship Disabled=true (it must auto-enable), and must run bootstrap silently.
 if grep -A1 '<key>Disabled</key>' "$PLIST" | grep -q '<true/>'; then

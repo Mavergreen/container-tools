@@ -4,7 +4,7 @@
 # Leaves a machines/default -> machines/$MACHINE symlink as a compat crutch. Does NOT edit
 # Fusion's inventory (prints guidance instead). Idempotent-ish: no-op if already migrated.
 set -u
-. "${MAVERICKS_DOCKER_COMMON:-/usr/local/libexec/modernmavericks/docker/docker-machine-common.sh}"
+. "${MAVERICKS_DOCKER_COMMON:-/usr/local/libexec/mavergreen/docker/docker-machine-common.sh}"
 
 OLD=default
 NEW=$MACHINE

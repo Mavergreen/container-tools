@@ -19,7 +19,7 @@ variables to set. `docked IMAGE CMD` runs a container with `$PWD` at `/work/`.
 To start the VM automatically at login:
 
 ```sh
-launchctl load -w /Library/LaunchAgents/dev.modernmavericks.container-tools-machine.plist
+launchctl load -w /Library/LaunchAgents/dev.mavergreen.container-tools-machine.plist
 ```
 
 ## Updates

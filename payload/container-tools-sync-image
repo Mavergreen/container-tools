@@ -15,7 +15,7 @@
 # from a reliable context instead: the always-running menu-bar app's "Update VM Image", or the CLI
 # `docker-machine-ctl image-upgrade`. Both share the same detection/repoint helpers used here.
 set -u
-. "${MAVERICKS_DOCKER_COMMON:-/usr/local/libexec/modernmavericks/docker/docker-machine-common.sh}"
+. "${MAVERICKS_DOCKER_COMMON:-/usr/local/libexec/mavergreen/docker/docker-machine-common.sh}"
 
 command -v docker-machine >/dev/null 2>&1 || exit 0
 [ "$(image_status)" = stale ] || exit 0   # VM absent, or already on the installed image

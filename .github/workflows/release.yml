@@ -230,7 +230,7 @@ jobs:
       - name: Install mavericks-shipyard
         uses: Mavergreen/shipyard/.github/actions/install@v1
 
-      # platform: shipyard ships no Linux pkg, so /usr/local/mavericks-shipyard, where
+      # platform: shipyard ships no Linux pkg, so /usr/local/mavergreen-shipyard, where
       #           CMakePresets.json's top-level "include" points, does not exist here -- and that
       #           "include" is resolved eagerly for the whole preset file, so it breaks `--preset iso`
       #           too even though iso inherits nothing from it (verified against this repo's
@@ -239,9 +239,9 @@ jobs:
       #           include expects, so this job can keep using --preset like build-macos does.
       - name: Reach shipyard's shared presets (no Linux pkg installs them)
         run: |
-          sudo mkdir -p /usr/local/mavericks-shipyard/share/cmake/MavericksShipyard
+          sudo mkdir -p /usr/local/mavergreen-shipyard/share/cmake/MavericksShipyard
           sudo ln -sf "$MavericksShipyard_DIR/mavericks-presets.json" \
-            /usr/local/mavericks-shipyard/share/cmake/MavericksShipyard/mavericks-presets.json
+            /usr/local/mavergreen-shipyard/share/cmake/MavericksShipyard/mavericks-presets.json
 
       # platform: ubuntu-latest also leaves $TMPDIR unset, and the iso preset's own environment
       #           computes MAVERICKS_BUILD_ROOT from $penv{TMPDIR} the same way shipyard's hidden
@@ -363,7 +363,7 @@ jobs:
             --migrate payload/docker-machine-migrate \
             --get-fusion payload/container-tools-get-fusion \
             --menubar-app in/DockerMenu.app \
-            --launch-agent payload/dev.modernmavericks.container-tools-machine.plist \
+            --launch-agent payload/dev.mavergreen.container-tools-machine.plist \
             --resources cmake/resources --welcome Welcome.html
 
           # Sign the .pkg + render the signed appcast; sign_and_appcast.sh auto-fetches the prebuilt

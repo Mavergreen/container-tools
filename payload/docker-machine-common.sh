@@ -16,14 +16,14 @@ esac
 
 MACHINE=container-tools
 CONTEXT=mavericks
-ISO=${MAVERICKS_DOCKER_ISO:-/usr/local/share/modernmavericks/container-tools/boot2docker.iso}
+ISO=${MAVERICKS_DOCKER_ISO:-/usr/local/share/mavergreen/container-tools/boot2docker.iso}
 LOG=${MAVERICKS_DOCKER_LOG:-$HOME/Library/Logs/Mavergreen/container-tools/bootstrap.log}
-STATE_DIR=${MAVERICKS_DOCKER_STATE_DIR:-$HOME/Library/Application Support/ModernMavericks/container-tools}
+STATE_DIR=${MAVERICKS_DOCKER_STATE_DIR:-$HOME/Library/Application Support/Mavergreen/container-tools}
 STATE_FILE="$STATE_DIR/state"
 LOCK="$STATE_DIR/creating.lock"
 OP_LOCK="$STATE_DIR/op.lock"   # generic in-progress marker for the ctl verbs (start/stop/restart/image-upgrade)
 PROFILES=${MAVERICKS_DOCKER_PROFILES:-$HOME/.bash_profile $HOME/.profile $HOME/.zshrc $HOME/.bashrc}
-AGENT_LABEL=dev.modernmavericks.container-tools-machine
+AGENT_LABEL=dev.mavergreen.container-tools-machine
 AGENT_PLIST=/Library/LaunchAgents/$AGENT_LABEL.plist
 MACHDIR=${MAVERICKS_DOCKER_MACHDIR:-$HOME/.docker/machine/machines}
 
@@ -34,6 +34,69 @@ log() {
   mkdir -p "$(dirname "$LOG")" 2>/dev/null || true
   echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG" 2>/dev/null || true
 }
+
+# ONE-TIME MIGRATION off the ModernMavericks identity (flag day 2026-09-22: the org became Mavergreen,
+# and ~/Library/{Application Support,Logs}/ModernMavericks became .../Mavergreen).
+# DELETABLE once no pre-flag-day install survives (see shipyard SKILL.md "Consolidation backlog").
+#
+# Done HERE, at runtime, not in the pkg: the pkg's scripts run once, as root, and know at most the
+# console user, but every account on the box has its own ~/Library. Everything that uses these dirs
+# (the login agent, the menu-bar app via docker-machine-ctl, the CLI helpers) sources this file, so
+# each user's dirs move the next time that user runs any of it.
+#
+# The state dir holds only the status word, the in-progress locks and the notification stamps; the
+# VM itself (disks, certs, config.json) is docker-machine's store under ~/.docker/machine, which the
+# rename does not touch. So the VM being up is no reason to wait -- an operation IN PROGRESS is:
+# an interactive create's Terminal command and a running ctl verb both hold a lock at the OLD path
+# and would recreate the old dir behind the move. Then this run keeps using the old dir and the move
+# happens on a later run (those locks are reclaimed after 600s even if their owner died).
+#
+# Moved, never deleted or merged: only when the old dir exists and the new one does not. If both
+# exist, the old one is left alone with a note in it saying why.
+# Returns 1 only when the move is deferred (the caller should keep using the old dir for this run).
+flagday_move_dir() { # old new
+  [ -d "$1" ] || return 0
+  if [ -e "$2" ]; then
+    if [ ! -f "$1/NOT-MIGRATED.txt" ]; then
+      printf '%s\n' \
+        "Container Tools now keeps these files in:" "  $2" \
+        "That folder already existed, so this one was left untouched rather than merged." \
+        "Nothing reads this folder any more; delete it once you have checked it holds nothing you need." \
+        > "$1/NOT-MIGRATED.txt" 2>/dev/null || true
+      log "flag day: both $1 and $2 exist; left the old one untouched (see NOT-MIGRATED.txt in it)"
+    fi
+    return 0
+  fi
+  if [ -d "$1/creating.lock" ] || [ -d "$1/op.lock" ]; then
+    log "flag day: $1 is in use by an operation in progress; will move it to $2 on a later run"
+    return 1
+  fi
+  mkdir -p "$(dirname "$2")" 2>/dev/null || true
+  if mv "$1" "$2" 2>/dev/null; then
+    rmdir "$(dirname "$1")" 2>/dev/null || true   # the old ModernMavericks parent, only if now empty
+    log "flag day: moved $1 to $2"
+    return 0
+  fi
+  # A concurrent run (the login agent and the menu both source this) may have just moved it.
+  [ -d "$2" ] && [ ! -d "$1" ] && return 0
+  log "flag day: could not move $1 to $2; starting afresh at the new location, the old one is untouched"
+  echo "container-tools: could not move $1 to $2 -- move it by hand (with Container Tools idle) to keep its contents" >&2
+  return 0
+}
+
+# Only for the real locations: a caller (a test) that points STATE_DIR or LOG somewhere else without
+# also naming the old location must never reach into the real ~/Library.
+if [ -z "${MAVERICKS_DOCKER_LOG+x}" ] || [ -n "${MAVERICKS_DOCKER_OLD_LOG_DIR:-}" ]; then
+  flagday_move_dir "${MAVERICKS_DOCKER_OLD_LOG_DIR:-$HOME/Library/Logs/ModernMavericks/container-tools}" \
+    "$(dirname "$LOG")" || true
+fi
+if [ -z "${MAVERICKS_DOCKER_STATE_DIR+x}" ] || [ -n "${MAVERICKS_DOCKER_OLD_STATE_DIR:-}" ]; then
+  _flagday_old_state="${MAVERICKS_DOCKER_OLD_STATE_DIR:-$HOME/Library/Application Support/ModernMavericks/container-tools}"
+  if ! flagday_move_dir "$_flagday_old_state" "$STATE_DIR"; then
+    STATE_DIR=$_flagday_old_state
+    STATE_FILE="$STATE_DIR/state"; LOCK="$STATE_DIR/creating.lock"; OP_LOCK="$STATE_DIR/op.lock"
+  fi
+fi
 
 notify() { # key title message  (throttled once/day per key)
   mkdir -p "$STATE_DIR" 2>/dev/null || true

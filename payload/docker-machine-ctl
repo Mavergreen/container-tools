@@ -2,7 +2,7 @@
 # docker-machine-ctl — the command surface the menu-bar app drives. Sources the shared
 # helpers; every state-changing verb re-announces via write_state.
 set -u
-. "${MAVERICKS_DOCKER_COMMON:-/usr/local/libexec/modernmavericks/docker/docker-machine-common.sh}"
+. "${MAVERICKS_DOCKER_COMMON:-/usr/local/libexec/mavergreen/docker/docker-machine-common.sh}"
 
 _run_and_announce() { # docker-machine subcommand
   docker-machine "$1" "$MACHINE" >>"$LOG" 2>&1

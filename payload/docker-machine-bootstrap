@@ -5,7 +5,7 @@
 set -u
 
 SELF=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
-. "${MAVERICKS_DOCKER_COMMON:-/usr/local/libexec/modernmavericks/docker/docker-machine-common.sh}"
+. "${MAVERICKS_DOCKER_COMMON:-/usr/local/libexec/mavergreen/docker/docker-machine-common.sh}"
 
 create_machine() {
   mkdir -p "$STATE_DIR" 2>/dev/null || true

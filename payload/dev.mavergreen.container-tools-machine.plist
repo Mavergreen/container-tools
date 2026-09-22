@@ -4,7 +4,7 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>dev.modernmavericks.container-tools-machine</string>
+  <string>dev.mavergreen.container-tools-machine</string>
 
   <!-- Enabled by default. A user can turn VM auto-start off via the menu's
        "Start Docker at Login" toggle (docker-machine-ctl login-off = unload -w). -->
