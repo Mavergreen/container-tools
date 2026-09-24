@@ -102,50 +102,19 @@ sh "$SHIPYARD/stage_updater.sh" --stage "$stage" --app "$UPD_APP" --app-dir "$UP
 [ -f "$scripts/postinstall" ] || printf '#!/bin/sh\n' > "$scripts/postinstall"
 sed -i '' -e '${/^[[:space:]]*exit 0[[:space:]]*$/d;}' "$scripts/postinstall"
 cat >> "$scripts/postinstall" <<'POST'
-# ONE-TIME MIGRATION off the ModernMavericks identity (flag day 2026-09-22): retire the old VM agent,
-# the old libexec/share dirs and the old receipt, carrying a "Start Docker at Login: off" choice over
-# to the new agent. See flagday.sh (cmake/flagday-postinstall.sh), staged beside this script.
-# DELETABLE once no pre-flag-day install survives (see shipyard SKILL.md "Consolidation backlog").
-CT_FLAGDAY_LOGIN_OFF=0
-. "$(dirname "$0")/flagday.sh"
-ct_flagday_retire "$3"
-# Converge on the renamed bundle. The .pkg lays down "/Applications/Mavericks Container Tools.app",
-# but installing over a pre-rename box leaves the old "/Applications/Container Tools for Mavericks.app"
-# behind -- still the running menu-bar process and still the registered Login Item (MDLoginItem keys
-# on the bundle URL) -- so the user keeps seeing the old name. Stop the old process and remove its
-# bundle (identity-checked, so an unrelated app is never touched) before (re)launching the new one,
-# which re-registers the Login Item at the new path.
 _uid=$(stat -f %u /dev/console 2>/dev/null)
 if [ -n "$_uid" ] && [ "${_uid:-0}" -gt 0 ]; then
   # Stop any old menu-bar instance before the launch below, or the two coexist and the user sees two
-  # icons. Shared helper (postinstall-stop-gui.sh, staged beside this script as stop-gui.sh); it matches
-  # the Contents/MacOS exec name -- unchanged across the rename -- so it also stops an app still running
-  # from the old bundle.
+  # icons. Shared helper (postinstall-stop-gui.sh, staged beside this script as stop-gui.sh).
   . "$(dirname "$0")/stop-gui.sh"
   mav_stop_gui_instance 'Contents/MacOS/DockerMenu' "$_uid"
-  # One-time cleanup of the pre-rename bundle, but ONLY if it is ours (identity-checked, so we never
-  # delete an unrelated /Applications/Container Tools for Mavericks.app) AND only once the new bundle
-  # is actually in place. The [ -d "$NEW_APP" ] guard is the safety belt: if bundle relocation ever
-  # writes the payload back onto OLD_APP (leaving NEW_APP absent), removing OLD_APP would delete the
-  # app we just installed -- the exact failure that emptied /Applications on the .12 install.
-  # The identity checked is the bundle id that old app shipped with, dev.modernmavericks.DockerMenu:
-  # it predates the flag day, so it keeps the old name (a rename to dev.mavergreen.* would never match).
-  NEW_APP="/Applications/Mavericks Container Tools.app"
-  OLD_APP="/Applications/Container Tools for Mavericks.app"
-  if [ -d "$NEW_APP" ] && [ "$OLD_APP" != "$NEW_APP" ] && [ -d "$OLD_APP" ] && \
-     [ "$(defaults read "$OLD_APP/Contents/Info" CFBundleIdentifier 2>/dev/null)" = "dev.modernmavericks.DockerMenu" ]; then
-    rm -rf "$OLD_APP"
-  fi
   # Launch the (new) menu-bar app as the console user so it registers its Login Item and appears
   # immediately (installer runs as root).
   launchctl asuser "$_uid" open -a "/Applications/Mavericks Container Tools.app" >/dev/null 2>&1 || true
   # Start the Docker VM now, as the console user (VM creation needs the user's Fusion/GUI session,
   # not root). Plain `load` (no -w): the plist ships enabled so a fresh install auto-starts, while a
-  # user who chose "Start Docker at Login → off" (unload -w) keeps that opt-out through upgrades --
-  # including the flag-day one, whose new Label launchd has no record for (CT_FLAGDAY_LOGIN_OFF).
-  if [ "$CT_FLAGDAY_LOGIN_OFF" != 1 ]; then
-    launchctl asuser "$_uid" load "/Library/LaunchAgents/dev.mavergreen.container-tools-machine.plist" >/dev/null 2>&1 || true
-  fi
+  # user who chose "Start Docker at Login → off" (unload -w) keeps that opt-out through upgrades.
+  launchctl asuser "$_uid" load "/Library/LaunchAgents/dev.mavergreen.container-tools-machine.plist" >/dev/null 2>&1 || true
 fi
 exit 0
 POST
@@ -155,9 +124,6 @@ chmod +x "$scripts/postinstall"
 # time on the target; a build-host script is not). Then gate the assembled postinstall -- a GUI-app
 # relaunch must be preceded by a stop -- and confirm the staged helper parses + defines the function.
 install -m 0644 "$SHIPYARD/postinstall-stop-gui.sh" "$scripts/stop-gui.sh"
-install -m 0644 "$(dirname "$0")/flagday-postinstall.sh" "$scripts/flagday.sh"
-sh -c '. "$1"; command -v ct_flagday_retire >/dev/null' _ "$scripts/flagday.sh" \
-  || { echo "package_pkg: staged flagday.sh does not define ct_flagday_retire" >&2; exit 1; }
 sh "$SHIPYARD/assert_gui_relaunch_safe.sh" "$scripts/postinstall" >&2
 sh -n "$scripts/postinstall" || { echo "package_pkg: assembled postinstall has a syntax error" >&2; exit 1; }
 sh -c '. "$1"; command -v mav_stop_gui_instance >/dev/null' _ "$scripts/stop-gui.sh" \
@@ -171,8 +137,7 @@ sh -c '. "$1"; command -v mav_stop_gui_instance >/dev/null' _ "$scripts/stop-gui
 find "$stage" -name '._*' -delete 2>/dev/null || true
 # Component pkg via the shared helper: it forces install-in-place -- BundleIsRelocatable=false, so the
 # payload lands at its DECLARED path instead of being relocated onto a same-identifier bundle already
-# on disk (the bug that kept reinstalling the menu-bar app under its pre-rename name and left the
-# rename un-applied), and BundleIsVersionChecked=false, so an update never skips a component whose
+# on disk, and BundleIsVersionChecked=false, so an update never skips a component whose
 # on-disk version looks newer. See mavericks-shipyard/scripts/build_component_pkg.sh.
 sh "$SHIPYARD/build_component_pkg.sh" --root "$stage" --identifier "$IDENT" --version "$VER" \
   --install-location / --scripts "$scripts" --out "$comp" >&2

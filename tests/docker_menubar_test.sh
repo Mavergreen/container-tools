@@ -71,12 +71,4 @@ grep -q 'MDFusionPromptSeeded' "$AD" || fail "must guard the one-time Fusion ale
 grep -q 'NSAlert' "$AD" || fail "must show an NSAlert when Fusion is absent"
 grep -q '@"Get VMware Fusion' "$AD" || fail "menu/alert must offer 'Get VMware Fusion'"
 
-# Flag day (2026-09-22): the bundle id moved from dev.modernmavericks.DockerMenu, taking the defaults
-# domain with it. Those seeds must be copied over BEFORE they are read, or the Login Item a user removed
-# comes back. DELETABLE with the migration (see shipyard SKILL.md "Consolidation backlog").
-grep -q '@"dev.modernmavericks.DockerMenu"' "$AD" || fail "defaults migration must read the OLD domain by its old name"
-grep -q 'setPersistentDomain:' "$AD" || fail "defaults migration must copy the old domain into the new one"
-awk '/applicationDidFinishLaunching/{f=1} f&&/migrateFlagDayDefaults\]/{m=NR} f&&/MDLoginItemSeeded/&&!s{s=NR} END{exit !(m && s && m<s)}' "$AD" \
-  || fail "defaults migration must run before the seeds are read"
-
 echo "docker_menubar_test: OK"

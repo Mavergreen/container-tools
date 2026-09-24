@@ -35,6 +35,6 @@ new image — nothing to run by hand.
   hardcoded `DOCKER_HOST=` line from your shell profile — it overrides the managed
   context. The bootstrap will notify you if it finds one.
 - The VM appears in VMware Fusion as "container-tools"; adjust CPU/RAM in its Settings.
-- Upgrading from an older install that had a `default` VM? Run `docker-machine-ctl migrate`
+- Coming from Wowfunhappy's DMG or another setup with a `default` VM? Run `docker-machine-ctl migrate`
   once (with the VM stopped) to rename it to `container-tools`, preserving your data.
 - boot2docker.iso: https://github.com/dragonflylee/boot2docker/

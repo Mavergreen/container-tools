@@ -17,8 +17,6 @@
   self.statusItem = [[NSStatusBar systemStatusBar] statusItemWithLength:NSSquareStatusItemLength];
   self.controller = [[MDController alloc] init];
 
-  [self migrateFlagDayDefaults];
-
   static NSString * const kSeeded = @"MDLoginItemSeeded";
   if (![[NSUserDefaults standardUserDefaults] boolForKey:kSeeded]) {
     [MDLoginItem setEnabled:YES];
@@ -30,25 +28,6 @@
   self.watchers = [[MDWatchers alloc] initWithStatePath:self.controller.stateFilePath
                                                onChange:^{ [weak refresh]; }];
   [self.watchers start];
-}
-
-// ONE-TIME MIGRATION off the ModernMavericks identity (flag day 2026-09-22): the bundle id was
-// dev.modernmavericks.DockerMenu, so this user's preferences live in that domain. They say "the Login
-// Item was already seeded" and "the Fusion prompt was already shown"; losing them would re-add a Login
-// Item the user removed and re-show a prompt they dismissed. Copy the old domain into the new one, once:
-// only when the new domain is still empty. The old domain is left in place (copied, not moved).
-// Done by the app, not the pkg, because each user's defaults are their own and cfprefsd owns them.
-// DELETABLE once no pre-flag-day install survives (see shipyard SKILL.md "Consolidation backlog").
-- (void)migrateFlagDayDefaults {
-  NSString *newDomain = [[NSBundle mainBundle] bundleIdentifier];
-  NSString *oldDomain = @"dev.modernmavericks.DockerMenu";
-  if (!newDomain.length || [newDomain isEqualToString:oldDomain]) return;
-  NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
-  if ([[d persistentDomainForName:newDomain] count]) return;
-  NSDictionary *old = [d persistentDomainForName:oldDomain];
-  if (![old count]) return;
-  [d setPersistentDomain:old forName:newDomain];
-  [d synchronize];
 }
 
 - (void)refresh {
