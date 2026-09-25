@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: macOS-only -- runs sw_vers
+# platform: macOS-only -- sw_vers/sysctl read the OS version the osinit guard branches on, and the probe cgo-links against the 10.9 SDK
 # Demonstrate that the go126 osinit_hack version-guard (patch-src_runtime_sys__darwin.go)
 # (1) fixes the 10.9 launch fault and (2) does not regress macOS >= 10.12.
 #

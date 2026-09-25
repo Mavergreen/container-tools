@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: host-agnostic
+# platform: macOS-only -- BSD `sed -i ''` in-place edits
 # docker-machine-migrate — one-time, in-place rename of the legacy 'default' Docker VM to
 # the current machine name ($MACHINE), preserving the data disk. Run with the VM STOPPED.
 # Leaves a machines/default -> machines/$MACHINE symlink as a compat crutch. Does NOT edit

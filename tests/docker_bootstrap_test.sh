@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: host-agnostic
+# platform: macOS-only -- exercises docker-machine-bootstrap, which sources common.sh's BSD `stat -f %m`
 # Behavioral tests for docker-machine-bootstrap via PATH stubs.
 set -eu
 ROOT=$(cd "$(dirname "$0")/.." && pwd)

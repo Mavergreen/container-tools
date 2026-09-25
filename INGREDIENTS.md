@@ -11,6 +11,7 @@ repackage of the same date-stamped product.
 | Ingredient | Pinned in | Renovate | On a bump |
 |---|---|---|---|
 | docker CLI | `components/docker-cli/version` (`REPO=` + `REF=` + `DIGEST=`) | ✅ `git-refs` + `currentDigest` | watched path → repackage dispatched → `-mavericks.(N+1)` |
+| docker CLI patch overlay | `components/docker-cli/patches/*.patch` | n/a (this repo's own fix) | **is** an ingredient — it is applied into the built binary, so a change rebuilds it |
 | docker Compose | `components/docker-compose/version` | ✅ `git-refs` + `currentDigest` | same |
 | docker Machine | `components/docker-machine/version` | ✅ `git-refs` + `currentDigest` | same |
 | lazydocker | `components/lazydocker/version` | ✅ `git-refs` + `currentDigest` | same |
@@ -26,9 +27,11 @@ there is a repackage you cut deliberately (`workflow_dispatch` with `local_relea
 ## Why the patch counts as an ingredient
 
 `cmake/build_boot2docker.sh` applies every `components/boot2docker/patches/*.patch` into the iso build,
-so a patch edit changes the shipped product exactly as a version bump would. The caller watches
-`components/**`, which covers it — and generated release notes describe a patch by its subject line and
-line delta rather than a meaningless byte count.
+and `cmake/build_docker_cli.sh` applies every `components/docker-cli/patches/*.patch` into the docker
+CLI build (adding `/usr/local/mavergreen/container-tools/lib/docker/cli-plugins` to its plugin search
+list), so either patch overlay changes the shipped product exactly as a version bump would. The caller
+watches `components/**`, which covers both — and generated release notes describe a patch by its
+subject line and line delta rather than a meaningless byte count.
 
 ## Acceptance is manual for the iso
 

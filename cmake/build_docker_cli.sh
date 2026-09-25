@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: host-agnostic
+# platform: macOS-only -- cgo external link against the 10.9 SDK via go126's CC wrapper
 # Build docker/cli -> $OUT/docker. Compiled with go126-cross (cross) or the native go126 .pkg (box).
 # The toolchain's default CC wrapper (set in $GOROOT/go.env) forces the darwin/amd64 min-10.9 target +
 # the 10.9 SDK and links the legacy-support shim + the -Wl,-U weak-symbol allowances on the external

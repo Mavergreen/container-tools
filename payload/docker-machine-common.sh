@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: host-agnostic
+# platform: macOS-only -- osascript notifications, and BSD `stat -f %m` for lock-age checks
 # docker-machine-common.sh — shared constants + helpers for docker-machine-bootstrap
 # and docker-machine-ctl. SOURCED, not executed. Honors the MAVERICKS_DOCKER_* test seams.
 

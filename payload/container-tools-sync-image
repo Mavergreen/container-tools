@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: host-agnostic
+# platform: macOS-only -- it sources docker-machine-common.sh (osascript, BSD stat -f)
 # Post-install helper: the updater runs this (as the user) after installing a new package; it's also
 # fine to run by hand. A host copies boot2docker.iso at `docker-machine create` and boots that copy
 # forever, so a package update that refreshes the installed ISO doesn't reach the VM until you

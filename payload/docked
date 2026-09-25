@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: host-agnostic
+# platform: macOS-only -- runs docker-machine-ctl, which controls launchctl and sources osascript/BSD-stat helpers
 # docked -- run a one-off container with sensible defaults, bringing the Docker VM up first.
 # Convenience wrapper after the design in Wowfunhappy's "Container Tools for Mavericks" DMG:
 #   docked [image] [command...]   ==   docker run with $PWD mounted at /work.

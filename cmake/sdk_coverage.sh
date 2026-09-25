@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: host-agnostic
+# platform: macOS-only -- nm reads Mach-O symbols
 # Prove every undefined dynamic import of each binary exists in the 10.9 SDK's
 # library stubs OR is on the weak allowlist. Version-INDEPENDENT: no committed
 # per-version reference needed. Fail-closed.

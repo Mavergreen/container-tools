@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: host-agnostic
+# platform: macOS-only -- osascript prompts, and it sources docker-machine-common.sh (osascript, BSD stat -f)
 # docker-machine-bootstrap — bring the Docker VM up and keep the docker CLI pointed at it,
 # with no shell wiring. Idempotent; always exits 0 (safe for a LaunchAgent on a timer).
 # Shared constants/helpers live in docker-machine-common.sh (sourced below).

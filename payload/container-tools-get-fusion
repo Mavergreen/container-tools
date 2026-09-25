@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: host-agnostic
+# platform: macOS-only -- `open` reveals the download in Finder and mounts the .dmg
 # container-tools-get-fusion — find the first VMware Fusion .dmg on the Macintosh Garden page and
 # download it. AquaProxy handles TLS on the old-OS hosts, so plain curl (no CA logic). On ANY
 # failure, open the page in a browser so the user is never stuck. Env: GET_FUSION_PAGE_URL,

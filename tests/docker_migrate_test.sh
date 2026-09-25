@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: host-agnostic
+# platform: macOS-only -- exercises docker-machine-migrate's BSD `sed -i ''`
 # Stub-based test of the rename surgery. NEVER touches the real ~/.docker.
 set -eu
 ROOT=$(cd "$(dirname "$0")/.." && pwd)

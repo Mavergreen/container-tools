@@ -25,7 +25,7 @@ grep -q 'launchctl asuser "\$_uid" load' "$HOOK" \
 grep -q 'container-tools-machine.plist' "$PKG" \
   || fail "postinstall must reference the machine LaunchAgent plist"
 if grep -q 'launchctl asuser "\$_uid" load -w' "$HOOK"; then
-  fail "the postinstall hook must NOT use 'load -w' (that would stomp an explicit opt-out)"
+  fail "the postinstall hook must NOT 'launchctl asuser \$_uid load -w' the machine agent (that would stomp an explicit opt-out)"
 fi
 
 # package_pkg.sh must accept --get-fusion and install it into the product tree.
