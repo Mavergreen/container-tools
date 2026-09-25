@@ -162,7 +162,8 @@ jobs:
       - name: Build the Sparkle updater (must not link docker)
         run: |
           # The x86_64 Sparkle slice is auto-derived from the updater's CMAKE_OSX_ARCHITECTURES.
-          shipyard-cmake -S updater -B "$MAVERICKS_BUILD_ROOT/container-tools-updater" -DCMAKE_OBJC_COMPILER=/usr/bin/clang
+          shipyard-cmake -S updater -B "$MAVERICKS_BUILD_ROOT/container-tools-updater" -DCMAKE_OBJC_COMPILER=/usr/bin/clang \
+            -DCMAKE_TOOLCHAIN_FILE="$SHIPYARD_SCRIPTS/../MavericksToolchain.cmake"
           shipyard-cmake --build "$MAVERICKS_BUILD_ROOT/container-tools-updater"
           BIN="$MAVERICKS_BUILD_ROOT/container-tools-updater/ContainerToolsUpdater.app/Contents/MacOS/ContainerToolsUpdater"
           otool -L "$BIN" | tee /tmp/o.txt
@@ -171,7 +172,8 @@ jobs:
 
       - name: Build the menu-bar app
         run: |
-          shipyard-cmake -S menubar -B "$MAVERICKS_BUILD_ROOT/container-tools-menubar" -DCMAKE_OBJC_COMPILER=/usr/bin/clang
+          shipyard-cmake -S menubar -B "$MAVERICKS_BUILD_ROOT/container-tools-menubar" -DCMAKE_OBJC_COMPILER=/usr/bin/clang \
+            -DCMAKE_TOOLCHAIN_FILE="$SHIPYARD_SCRIPTS/../MavericksToolchain.cmake"
           shipyard-cmake --build "$MAVERICKS_BUILD_ROOT/container-tools-menubar"
 
       - name: The build must not have written into the source tree
