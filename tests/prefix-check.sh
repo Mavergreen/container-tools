@@ -1,4 +1,5 @@
 #!/bin/sh
+# platform: host-agnostic
 set -eu
 cd "$(dirname "$0")/.."
 if git ls-files CMakeLists.txt .github/workflows/release.yml | xargs grep -l '/usr/local/mavericks-go' 2>/dev/null | grep -q .; then

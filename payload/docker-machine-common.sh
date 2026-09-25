@@ -1,4 +1,5 @@
 #!/bin/sh
+# platform: host-agnostic
 # docker-machine-common.sh — shared constants + helpers for docker-machine-bootstrap
 # and docker-machine-ctl. SOURCED, not executed. Honors the MAVERICKS_DOCKER_* test seams.
 
@@ -8,7 +9,7 @@
 # status_word() -> "absent" while the VM is really Stopped, and start/stop no-op. Guarantee
 # our bindir is reachable regardless of the caller's PATH. Appended (not prepended) so a
 # test/caller stub earlier on PATH still wins. Found dogfooding, 2026-07-29.
-BINDIR=${MAVERICKS_DOCKER_BINDIR:-/usr/local/bin}
+BINDIR=${MAVERICKS_DOCKER_BINDIR:-/usr/local/mavergreen/container-tools/bin}
 case ":$PATH:" in
   *:"$BINDIR":*) ;;
   *) PATH="$PATH:$BINDIR"; export PATH ;;
@@ -16,7 +17,7 @@ esac
 
 MACHINE=container-tools
 CONTEXT=mavericks
-ISO=${MAVERICKS_DOCKER_ISO:-/usr/local/share/mavergreen/container-tools/boot2docker.iso}
+ISO=${MAVERICKS_DOCKER_ISO:-/usr/local/mavergreen/container-tools/share/boot2docker.iso}
 LOG=${MAVERICKS_DOCKER_LOG:-$HOME/Library/Logs/Mavergreen/container-tools/bootstrap.log}
 STATE_DIR=${MAVERICKS_DOCKER_STATE_DIR:-$HOME/Library/Application Support/Mavergreen/container-tools}
 STATE_FILE="$STATE_DIR/state"

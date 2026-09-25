@@ -1,4 +1,5 @@
 #!/bin/sh
+# platform: host-agnostic
 # Unit tests for docker-machine-common.sh helpers via PATH stubs.
 set -eu
 ROOT=$(cd "$(dirname "$0")/.." && pwd)

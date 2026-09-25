@@ -1,4 +1,5 @@
 #!/bin/sh
+# platform: host-agnostic
 # Point a Dockerfile's one FROM at a pinned base image. Called by build_boot2docker.sh after the patch
 # overlay. Upstream boot2docker hard-codes `FROM debian:bullseye-slim`, inside a pinned third-party
 # checkout where Renovate can't see it -- so it rotted until bullseye left security support

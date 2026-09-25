@@ -1,4 +1,5 @@
 #!/bin/sh
+# platform: macOS-only -- drives shipyard's pkgbuild/productbuild/PlistBuddy helpers
 # Assemble the (unsigned) container-tools product .pkg: the docker CLI + Compose + Machine binaries,
 # the boot2docker.iso, and the Sparkle updater (app + shim + daily LaunchAgent), with a hard 10.9.5
 # install floor. Signing + appcast happen separately (shared sign_and_appcast.sh) in the release
@@ -54,36 +55,33 @@ fi
 for f in "$DOCKER" "$COMPOSE" "$MACHINE" "$LAZY" "$ISO" "$DOCKED" "$SYNC" "$BOOT" "$COMMON" "$CTL" "$MIGRATE" "$GETFUSION" "$LAUNCHAGENT"; do [ -f "$f" ] || { echo "package_pkg: missing input: $f" >&2; exit 1; }; done
 [ -d "$UPD_APP" ] || { echo "package_pkg: no updater .app: $UPD_APP" >&2; exit 1; }
 [ -d "$MENUBAR" ] || { echo "package_pkg: no menubar .app: $MENUBAR" >&2; exit 1; }
-for h in stage_updater.sh set_install_floor.sh build_component_pkg.sh assert_pkg_installs_in_place.sh \
+for h in stage_product.sh set_install_floor.sh build_component_pkg.sh assert_pkg_installs_in_place.sh \
          postinstall-stop-gui.sh assert_gui_relaunch_safe.sh; do
   [ -f "$SHIPYARD/$h" ] || { echo "package_pkg: shared helper missing: $SHIPYARD/$h" >&2; exit 1; }
 done
 
 IDENT="dev.mavergreen.container-tools"
-AGENT_LABEL="dev.mavergreen.container-tools-updatecheck"
-UPD_APPDIR="/Library/Application Support/Mavergreen"
 
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/container-tools-pkg.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 stage="$WORK/stage"; scripts="$WORK/scripts"; comp="$WORK/component.pkg"
 
 # --- product payload (docker CLI + plugins + iso) ---
-mkdir -p "$stage/usr/local/bin" "$stage/usr/local/lib/docker/cli-plugins" "$stage/usr/local/share/mavergreen/container-tools"
-install -m 0755 "$DOCKER"  "$stage/usr/local/bin/docker"
-install -m 0755 "$MACHINE" "$stage/usr/local/bin/docker-machine"
-install -m 0755 "$LAZY"    "$stage/usr/local/bin/lazydocker"
-install -m 0755 "$DOCKED"  "$stage/usr/local/bin/docked"
-install -m 0755 "$SYNC"    "$stage/usr/local/bin/container-tools-sync-image"
-install -m 0755 "$BOOT"    "$stage/usr/local/bin/docker-machine-bootstrap"
-install -m 0755 "$CTL"    "$stage/usr/local/bin/docker-machine-ctl"
-install -m 0755 "$MIGRATE" "$stage/usr/local/bin/docker-machine-migrate"
-install -m 0755 "$GETFUSION" "$stage/usr/local/bin/container-tools-get-fusion"
-mkdir -p "$stage/usr/local/libexec/mavergreen/docker"
-install -m 0644 "$COMMON" "$stage/usr/local/libexec/mavergreen/docker/docker-machine-common.sh"
-# Compose v2 as a CLI plugin (enables `docker compose`), plus a standalone `docker-compose` symlink.
-install -m 0755 "$COMPOSE" "$stage/usr/local/lib/docker/cli-plugins/docker-compose"
-ln -s ../lib/docker/cli-plugins/docker-compose "$stage/usr/local/bin/docker-compose"
-install -m 0644 "$ISO"    "$stage/usr/local/share/mavergreen/container-tools/boot2docker.iso"
+T="$stage/usr/local/mavergreen/container-tools"
+mkdir -p "$T/bin" "$T/libexec" "$T/lib/docker/cli-plugins" "$T/share"
+install -m 0755 "$DOCKER"  "$T/bin/docker"
+install -m 0755 "$MACHINE" "$T/bin/docker-machine"
+install -m 0755 "$LAZY"    "$T/bin/lazydocker"
+install -m 0755 "$DOCKED"  "$T/bin/docked"
+install -m 0755 "$SYNC"    "$T/bin/container-tools-sync-image"
+install -m 0755 "$BOOT"    "$T/bin/docker-machine-bootstrap"
+install -m 0755 "$CTL"     "$T/bin/docker-machine-ctl"
+install -m 0755 "$MIGRATE" "$T/bin/docker-machine-migrate"
+install -m 0755 "$GETFUSION" "$T/bin/container-tools-get-fusion"
+install -m 0644 "$COMMON"  "$T/libexec/docker-machine-common.sh"
+install -m 0755 "$COMPOSE" "$T/lib/docker/cli-plugins/docker-compose"
+ln -s ../lib/docker/cli-plugins/docker-compose "$T/bin/docker-compose"
+install -m 0644 "$ISO"     "$T/share/boot2docker.iso"
 mkdir -p "$stage/Applications"
 cp -R "$MENUBAR" "$stage/Applications/Mavericks Container Tools.app"
 
@@ -94,47 +92,21 @@ mkdir -p "$stage/Library/LaunchAgents"
 install -m 0644 "$LAUNCHAGENT" "$stage/Library/LaunchAgents/dev.mavergreen.container-tools-machine.plist"
 
 # --- updater app + LaunchAgent + postinstall (shared, hoisted) ---
-sh "$SHIPYARD/stage_updater.sh" --stage "$stage" --app "$UPD_APP" --app-dir "$UPD_APPDIR" \
-  --agent-label "$AGENT_LABEL" --scripts-out "$scripts"
-
-# stage_updater.sh's generated postinstall ends with `exit 0`; drop a trailing standalone
-# one so the launch below runs, then re-add exit 0 at the very end. Robust if it changes.
-[ -f "$scripts/postinstall" ] || printf '#!/bin/sh\n' > "$scripts/postinstall"
-sed -i '' -e '${/^[[:space:]]*exit 0[[:space:]]*$/d;}' "$scripts/postinstall"
-cat >> "$scripts/postinstall" <<'POST'
-_uid=$(stat -f %u /dev/console 2>/dev/null)
-if [ -n "$_uid" ] && [ "${_uid:-0}" -gt 0 ]; then
-  # Stop any old menu-bar instance before the launch below, or the two coexist and the user sees two
-  # icons. Shared helper (postinstall-stop-gui.sh, staged beside this script as stop-gui.sh).
-  . "$(dirname "$0")/stop-gui.sh"
-  mav_stop_gui_instance 'Contents/MacOS/DockerMenu' "$_uid"
-  # Launch the (new) menu-bar app as the console user so it registers its Login Item and appears
-  # immediately (installer runs as root).
-  launchctl asuser "$_uid" open -a "/Applications/Mavericks Container Tools.app" >/dev/null 2>&1 || true
-  # Start the Docker VM now, as the console user (VM creation needs the user's Fusion/GUI session,
-  # not root). Plain `load` (no -w): the plist ships enabled so a fresh install auto-starts, while a
-  # user who chose "Start Docker at Login → off" (unload -w) keeps that opt-out through upgrades.
-  launchctl asuser "$_uid" load "/Library/LaunchAgents/dev.mavergreen.container-tools-machine.plist" >/dev/null 2>&1 || true
-fi
-exit 0
-POST
-chmod +x "$scripts/postinstall"
-
-# Stage the shared stop-the-old-menu-bar-instance helper the postinstall sources (present at install
-# time on the target; a build-host script is not). Then gate the assembled postinstall -- a GUI-app
-# relaunch must be preceded by a stop -- and confirm the staged helper parses + defines the function.
+mkdir -p "$scripts"
 install -m 0644 "$SHIPYARD/postinstall-stop-gui.sh" "$scripts/stop-gui.sh"
+find "$stage" -name '._*' -delete 2>/dev/null || true
+sh "$SHIPYARD/stage_product.sh" --stage "$stage" --product container-tools \
+  --name "Container Tools for Mavericks" --version "$VER" --updater-app "$UPD_APP" \
+  --postinstall-hook "$(dirname "$0")/postinstall-hook.sh" --scripts-out "$scripts" >&2
+
+# Gate the assembled postinstall -- a GUI-app relaunch must be preceded by a stop -- and confirm the
+# staged helper parses + defines the function.
 sh "$SHIPYARD/assert_gui_relaunch_safe.sh" "$scripts/postinstall" >&2
 sh -n "$scripts/postinstall" || { echo "package_pkg: assembled postinstall has a syntax error" >&2; exit 1; }
 sh -c '. "$1"; command -v mav_stop_gui_instance >/dev/null' _ "$scripts/stop-gui.sh" \
   || { echo "package_pkg: staged stop-gui.sh does not define mav_stop_gui_instance" >&2; exit 1; }
 
 # --- flat component pkg over the whole payload, with the agent-loading postinstall ---
-# Strip AppleDouble sidecars copied in from the (NFS) source tree. NOTE: macOS 26 stamps an
-# UNREMOVABLE com.apple.provenance xattr on every Mach-O, and pkgbuild encodes each as a ._ payload
-# entry -- unavoidable, and identical to golang/swift's shipped pkgs. Those merge back into inert
-# xattrs when Installer extracts onto the 10.9 box's HFS+, so no ._ FILES land on the target.
-find "$stage" -name '._*' -delete 2>/dev/null || true
 # Component pkg via the shared helper: it forces install-in-place -- BundleIsRelocatable=false, so the
 # payload lands at its DECLARED path instead of being relocated onto a same-identifier bundle already
 # on disk, and BundleIsVersionChecked=false, so an update never skips a component whose

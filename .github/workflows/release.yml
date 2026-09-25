@@ -158,14 +158,14 @@ jobs:
 
       # Build the Sparkle updater .app on every build (catches updater breaks on PRs). The updater must
       # NOT link any docker product (self-update circularity); its own binary is named
-      # ContainerToolsUpdater, so skip line 1 of otool before checking for a docker linkage.
+      # container-tools-updater, so skip line 1 of otool before checking for a docker linkage.
       - name: Build the Sparkle updater (must not link docker)
         run: |
           # The x86_64 Sparkle slice is auto-derived from the updater's CMAKE_OSX_ARCHITECTURES.
           shipyard-cmake -S updater -B "$MAVERICKS_BUILD_ROOT/container-tools-updater" -DCMAKE_OBJC_COMPILER=/usr/bin/clang \
             -DCMAKE_TOOLCHAIN_FILE="$SHIPYARD_SCRIPTS/../MavericksToolchain.cmake"
           shipyard-cmake --build "$MAVERICKS_BUILD_ROOT/container-tools-updater"
-          BIN="$MAVERICKS_BUILD_ROOT/container-tools-updater/ContainerToolsUpdater.app/Contents/MacOS/ContainerToolsUpdater"
+          BIN="$MAVERICKS_BUILD_ROOT/container-tools-updater/container-tools-updater.app/Contents/MacOS/container-tools-updater"
           otool -L "$BIN" | tee /tmp/o.txt
           if otool -L "$BIN" | tail -n +2 | grep -iq docker; then
             echo "::error::updater links a docker product (self-update circularity)"; exit 1; fi
@@ -191,7 +191,7 @@ jobs:
           cp "$CROSS/docker-compose/docker-compose" stage/docker-compose
           cp "$CROSS/docker-machine/docker-machine" stage/docker-machine
           cp "$CROSS/lazydocker/lazydocker"        stage/lazydocker
-          cp -R "$MAVERICKS_BUILD_ROOT/container-tools-updater/ContainerToolsUpdater.app" stage/ContainerToolsUpdater.app
+          cp -R "$MAVERICKS_BUILD_ROOT/container-tools-updater/container-tools-updater.app" stage/container-tools-updater.app
           cp -R "$MAVERICKS_BUILD_ROOT/container-tools-menubar/DockerMenu.app" stage/DockerMenu.app
           find stage -name '._*' -delete 2>/dev/null || true
           tar -C stage -czf packaging-inputs.tgz .
@@ -232,7 +232,7 @@ jobs:
       - name: Install mavericks-shipyard
         uses: Mavergreen/shipyard/.github/actions/install@v1
 
-      # platform: shipyard ships no Linux pkg, so /usr/local/mavergreen-shipyard, where
+      # platform: shipyard ships no Linux pkg, so /usr/local/mavergreen/shipyard, where
       #           CMakePresets.json's top-level "include" points, does not exist here -- and that
       #           "include" is resolved eagerly for the whole preset file, so it breaks `--preset iso`
       #           too even though iso inherits nothing from it (verified against this repo's
@@ -241,9 +241,9 @@ jobs:
       #           include expects, so this job can keep using --preset like build-macos does.
       - name: Reach shipyard's shared presets (no Linux pkg installs them)
         run: |
-          sudo mkdir -p /usr/local/mavergreen-shipyard/share/cmake/MavericksShipyard
+          sudo mkdir -p /usr/local/mavergreen/shipyard/share/cmake/MavericksShipyard
           sudo ln -sf "$MavericksShipyard_DIR/mavericks-presets.json" \
-            /usr/local/mavergreen-shipyard/share/cmake/MavericksShipyard/mavericks-presets.json
+            /usr/local/mavergreen/shipyard/share/cmake/MavericksShipyard/mavericks-presets.json
 
       # platform: ubuntu-latest also leaves $TMPDIR unset, and the iso preset's own environment
       #           computes MAVERICKS_BUILD_ROOT from $penv{TMPDIR} the same way shipyard's hidden
@@ -357,7 +357,7 @@ jobs:
           sh cmake/package_pkg.sh --out "$PKG" --version "$VER" \
             --docker in/docker --compose in/docker-compose --machine in/docker-machine \
             --lazydocker in/lazydocker --iso iso/boot2docker.iso \
-            --updater-app in/ContainerToolsUpdater.app \
+            --updater-app in/container-tools-updater.app \
             --docked payload/docked --sync-helper payload/container-tools-sync-image \
             --bootstrap payload/docker-machine-bootstrap \
             --common payload/docker-machine-common.sh \
@@ -373,10 +373,11 @@ jobs:
           # /latest/ resolves to this full release immediately, so Sparkle clients pick it up right away.
           URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/$VER/$(basename "$PKG")"
           sh "$SHIPYARD_SCRIPTS/sign_and_appcast.sh" \
+            --product container-tools --feed-dir dist \
             --channel-title "Container Tools for Mavericks" \
             --version "$VER" --pkg-url "$URL" --min-os 10.9.5 \
-            --notes-file dist/RELEASE_NOTES.md --pkg "$PKG" > dist/appcast.xml
-          echo "=== appcast.xml ==="; cat dist/appcast.xml
+            --notes-file dist/RELEASE_NOTES.md --pkg "$PKG"
+          echo "=== container-tools.xml ==="; cat dist/container-tools.xml
       # No SHA256SUMS here: publish-release.yml regenerates it over everything it attaches, so the
       # checksums cover the appcast too and no repo hand-rolls that step.
       # Conformance: the .pkg, the appcast and the version we are about to publish must agree with each
@@ -391,14 +392,14 @@ jobs:
           # numeric sparkle:version that orders strictly after the last published one. The conformance
           # check above verifies artifacts AGREE; it never exercised update ordering, which is the gap
           # the "-mavericks.N compares EQUAL -> you're up to date" bug shipped straight through.
-          sh "$SHIPYARD_SCRIPTS/assert_appcast_upgradeable.sh" --appcast dist/appcast.xml --version "$VER"
+          sh "$SHIPYARD_SCRIPTS/assert_appcast_upgradeable.sh" --appcast dist/container-tools.xml --version "$VER"
 
       - uses: actions/upload-artifact@v7
         with:
           name: docker-pkg
           path: |
             dist/*.pkg
-            dist/appcast.xml
+            dist/container-tools.xml
             dist/RELEASE_NOTES.md
             dist/build-info-*.txt
 

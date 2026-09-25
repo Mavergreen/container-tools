@@ -1,4 +1,5 @@
 #!/bin/sh
+# platform: host-agnostic
 # The already-built docker binary must pass the guard (x86_64, min-10.9, no post-10.9 imports).
 # $1 = binary to check; $2 = path to the shared assert_binary_compatible.sh (from the ctest def).
 set -eu

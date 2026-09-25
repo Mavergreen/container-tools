@@ -1,4 +1,5 @@
 #!/bin/sh
+# platform: host-agnostic
 # Build lazydocker (jesseduffield/lazydocker; a go.mod module, root main package) -> $OUT/lazydocker.
 # A terminal UI for Docker. The go126 toolchain's default CC wrapper (go.env) forces the darwin/amd64
 # min-10.9 target + SDK and links the legacy-support shim on the external link; nothing here.

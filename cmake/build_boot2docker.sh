@@ -1,4 +1,5 @@
 #!/bin/sh
+# platform: host-agnostic
 # Build boot2docker.iso from a pinned dragonflylee/boot2docker checkout, using its own
 # Dockerfile recipe. Called by the boot2docker ExternalProject. Args (all explicit):
 #   $1 SRC   absolute cloned source dir (has Dockerfile)

@@ -1,4 +1,5 @@
 #!/bin/sh
+# platform: host-agnostic
 # Build docker/cli -> $OUT/docker. Compiled with go126-cross (cross) or the native go126 .pkg (box).
 # The toolchain's default CC wrapper (set in $GOROOT/go.env) forces the darwin/amd64 min-10.9 target +
 # the 10.9 SDK and links the legacy-support shim + the -Wl,-U weak-symbol allowances on the external
@@ -8,6 +9,12 @@ set -eu
 SRC=$1; OUT=$2; GO=$3; REF=$4
 VER=${REF#v}
 mkdir -p "$OUT"
+PATCHES="$(cd "$(dirname "$0")/.." && pwd)/components/docker-cli/patches"
+git -C "$SRC" checkout -- .
+for p in "$PATCHES"/*.patch; do
+  [ -e "$p" ] || continue
+  git -C "$SRC" apply "$p"
+done
 cd "$SRC"
 ln -sf vendor.mod go.mod
 ln -sf vendor.sum go.sum

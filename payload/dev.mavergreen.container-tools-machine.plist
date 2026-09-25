@@ -12,7 +12,7 @@
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
-    <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <string>/usr/local/mavergreen/container-tools/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <!-- Silent create: no Terminal window on first run; menu-bar shows "Docker: Starting…". -->
     <key>MAVERICKS_DOCKER_NONINTERACTIVE</key>
     <string>1</string>
@@ -20,7 +20,7 @@
 
   <key>ProgramArguments</key>
   <array>
-    <string>/usr/local/bin/docker-machine-bootstrap</string>
+    <string>/usr/local/mavergreen/container-tools/bin/docker-machine-bootstrap</string>
   </array>
 
   <!-- Bring the VM up at login, then re-check every 60s (recovers after sleep/stop). -->

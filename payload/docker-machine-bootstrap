@@ -1,11 +1,12 @@
 #!/bin/sh
+# platform: host-agnostic
 # docker-machine-bootstrap — bring the Docker VM up and keep the docker CLI pointed at it,
 # with no shell wiring. Idempotent; always exits 0 (safe for a LaunchAgent on a timer).
 # Shared constants/helpers live in docker-machine-common.sh (sourced below).
 set -u
 
 SELF=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
-. "${MAVERICKS_DOCKER_COMMON:-/usr/local/libexec/mavergreen/docker/docker-machine-common.sh}"
+. "${MAVERICKS_DOCKER_COMMON:-/usr/local/mavergreen/container-tools/libexec/docker-machine-common.sh}"
 
 create_machine() {
   mkdir -p "$STATE_DIR" 2>/dev/null || true

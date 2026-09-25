@@ -1,4 +1,5 @@
 #!/bin/sh
+# platform: host-agnostic
 # Prove every undefined dynamic import of each binary exists in the 10.9 SDK's
 # library stubs OR is on the weak allowlist. Version-INDEPENDENT: no committed
 # per-version reference needed. Fail-closed.

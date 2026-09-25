@@ -1,4 +1,5 @@
 #!/bin/sh
+# platform: host-agnostic
 # Behavioral test of container-tools-get-fusion: parse the page, pick the FIRST dmg + a token-free
 # mirror, download it, and fall back to opening the page on failure.
 set -eu

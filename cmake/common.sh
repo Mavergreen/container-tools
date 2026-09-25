@@ -1,4 +1,5 @@
 #!/bin/sh
+# platform: macOS-only -- runs sw_vers
 # Shared helpers for build + gate scripts. POSIX sh; no bashisms.
 # mavericks_docker_mode: "native" on the real 10.9 machine (pkgsrc go126 present), else "cross".
 mavericks_docker_mode() {

@@ -1,4 +1,5 @@
 #!/bin/sh
+# platform: host-agnostic
 # boot2docker.yml exists, runs on ubuntu, drives the iso preset + ctest. When a YAML
 # parser is available it must also parse cleanly; otherwise the grep checks are the gate.
 set -eu

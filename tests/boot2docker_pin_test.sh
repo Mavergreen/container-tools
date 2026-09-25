@@ -1,4 +1,5 @@
 #!/bin/sh
+# platform: host-agnostic
 # boot2docker pin is well-formed and Renovate-trackable: REPO + REF + a 40-hex commit DIGEST, which
 # clone_pinned.sh verifies the checkout against (a moved tag bails). No separate golden.sha256 -- the
 # commit digest IS the reproducibility pin (see the shared clone_pinned convention).

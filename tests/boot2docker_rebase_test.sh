@@ -1,4 +1,5 @@
 #!/bin/sh
+# platform: host-agnostic
 # rebase_dockerfile.sh: rewrites the Dockerfile's one FROM to the pinned BASE, leaving every other
 # line alone; refuses (non-zero, file untouched) when there isn't exactly one FROM to rewrite.
 set -eu

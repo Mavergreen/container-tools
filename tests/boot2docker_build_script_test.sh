@@ -1,4 +1,5 @@
 #!/bin/sh
+# platform: host-agnostic
 # build_boot2docker.sh: valid POSIX sh; rejects missing args without touching docker.
 set -eu
 ROOT=$(cd "$(dirname "$0")/.." && pwd)

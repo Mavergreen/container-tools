@@ -29,6 +29,9 @@ new image — nothing to run by hand.
 
 ## Notes
 
+- The commands install into `/usr/local/mavergreen/container-tools/bin`, on your PATH through
+  `/usr/local/mavergreen/bin`. If Docker Desktop is also installed, its `/usr/local/bin/docker`
+  comes first on PATH and shadows this one.
 - If `docker` says "cannot connect," the VM is stopped — run `docker-machine-bootstrap`
   (or start it from the menu bar) and retry.
 - Migrating from an older setup? Remove any `eval "$(docker-machine env …)"` or

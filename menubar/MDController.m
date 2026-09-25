@@ -1,6 +1,6 @@
 #import "MDController.h"
 
-static NSString * const kCtl = @"/usr/local/bin/docker-machine-ctl";
+static NSString * const kCtl = @"/usr/local/mavergreen/container-tools/bin/docker-machine-ctl";
 
 @implementation MDController
 

@@ -1,4 +1,5 @@
 #!/bin/sh
+# platform: host-agnostic
 # Scaffold sanity: common.sh loads, build-mode detection returns a known value.
 set -eu
 ROOT=$(cd "$(dirname "$0")/.." && pwd)

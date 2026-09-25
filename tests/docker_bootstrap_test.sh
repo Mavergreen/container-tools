@@ -1,4 +1,5 @@
 #!/bin/sh
+# platform: host-agnostic
 # Behavioral tests for docker-machine-bootstrap via PATH stubs.
 set -eu
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -324,7 +325,7 @@ case_stale_lock
 
 # --- Case: packaging references are consistent ---
 case_packaging() {
-  grep -q '/usr/local/bin/docker-machine-bootstrap' "$ROOT/payload/dev.mavergreen.container-tools-machine.plist" \
+  grep -q '/usr/local/mavergreen/container-tools/bin/docker-machine-bootstrap' "$ROOT/payload/dev.mavergreen.container-tools-machine.plist" \
     || fail "plist must launch docker-machine-bootstrap"
   grep -q 'docker-machine-ensure-default' "$ROOT/payload/dev.mavergreen.container-tools-machine.plist" \
     && fail "plist still references the old guard"

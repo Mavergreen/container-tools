@@ -159,7 +159,7 @@
 - (void)doGetFusion:(id)s {
   [self notifyTitle:@"Container Tools" text:@"Downloading VMware Fusion (467 MB)…"];
   NSTask *t = [[NSTask alloc] init];
-  t.launchPath = @"/usr/local/bin/container-tools-get-fusion";
+  t.launchPath = @"/usr/local/mavergreen/container-tools/bin/container-tools-get-fusion";
   @try { [t launch]; }
   @catch (NSException *e) { NSLog(@"Container Tools: could not run get-fusion: %@", e); }
 }
@@ -193,7 +193,7 @@
   // `open` returns as soon as it hands off, so there's nothing to reap.
   NSTask *t = [[NSTask alloc] init];
   t.launchPath = @"/usr/bin/open";
-  t.arguments = @[@"/Library/Application Support/Mavergreen/ContainerToolsUpdater.app",
+  t.arguments = @[@"/Library/Application Support/Mavergreen/container-tools-updater.app",
                   @"--args", @"--user"];
   @try {
     [t launch];

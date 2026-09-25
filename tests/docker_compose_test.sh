@@ -1,4 +1,5 @@
 #!/bin/sh
+# platform: host-agnostic
 # build_docker_compose.sh must stamp internal.Version via the module path read
 # from go.mod, not a hardcoded major-version path (v2 -> v5 broke silently).
 set -eu

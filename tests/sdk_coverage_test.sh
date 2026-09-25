@@ -1,4 +1,5 @@
 #!/bin/sh
+# platform: host-agnostic
 # Every undefined import of the docker binary must be provided by the pinned 10.9
 # SDK stubs, or be on the weak allowlist.
 set -eu

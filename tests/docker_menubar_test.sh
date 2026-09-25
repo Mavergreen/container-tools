@@ -1,4 +1,5 @@
 #!/bin/sh
+# platform: host-agnostic
 # Consistency: the menu-bar app is an LSUIElement, and the pkg installs + launches it.
 set -eu
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -30,8 +31,8 @@ grep -q 'Check for Updates' "$AD" || fail "menu must offer 'Check for Updates'"
 # package-install needs a LaunchServices-launched host, or AuthorizationExecuteWithPrivileges fails
 # (-60008). See the updater's Info.plist.in comment in shipyard.
 grep -q '/usr/bin/open' "$AD" || fail "'Check for Updates' must launch the updater via open (LaunchServices), not fork+exec"
-grep -q 'ContainerToolsUpdater.app' "$AD" || fail "'Check for Updates' must open the bundled updater .app"
-if grep -q 'ContainerToolsUpdater.app/Contents/MacOS/ContainerToolsUpdater' "$AD"; then
+grep -q 'container-tools-updater.app' "$AD" || fail "'Check for Updates' must open the bundled updater .app"
+if grep -q 'container-tools-updater.app/Contents/MacOS/container-tools-updater' "$AD"; then
   fail "'Check for Updates' must NOT fork+exec the updater executable directly (breaks Sparkle install)"
 fi
 grep -q '"--user"' "$AD" || fail "'Check for Updates' must run the updater with --user (interactive)"
@@ -51,7 +52,8 @@ if grep -q 'keyEquivalent:@"q"' "$AD"; then fail "Quit must carry no shortcut (n
 grep -q -- '--menubar-app' "$ROOT/cmake/package_pkg.sh" || fail "package_pkg.sh needs --menubar-app"
 grep -q 'Applications/Mavericks Container Tools.app' "$ROOT/cmake/package_pkg.sh" \
   || fail "package_pkg.sh must install the app to /Applications"
-grep -q 'asuser' "$ROOT/cmake/package_pkg.sh" || fail "postinstall must launch the app as the console user"
+grep -q -- '--postinstall-hook' "$ROOT/cmake/package_pkg.sh" || fail "package_pkg.sh must wire in the postinstall hook"
+grep -q 'asuser' "$ROOT/cmake/postinstall-hook.sh" || fail "the postinstall hook must launch the app as the console user"
 
 grep -q -- '--menubar-app' "$ROOT/.github/workflows/release.yml" || fail "release.yml must pass --menubar-app"
 # Anchored at command position: 'cmake -S menubar' is a substring of 'shipyard-cmake -S menubar', so

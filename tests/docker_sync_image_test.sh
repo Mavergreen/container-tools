@@ -1,4 +1,5 @@
 #!/bin/sh
+# platform: host-agnostic
 # Stub-based test of container-tools-sync-image (the updater's post-install helper). NEVER touches the
 # real ~/.docker. Under test: on a stale VM it (1) repoints a Wowfunhappy-migrated host's Boot2DockerURL
 # at the installed ISO so a later `docker-machine upgrade` can fetch it, and (2) posts a NON-modal

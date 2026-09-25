@@ -1,4 +1,5 @@
 #!/bin/sh
+# platform: host-agnostic
 # Unit tests for docker-machine-ctl verbs via PATH stubs.
 set -eu
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -134,15 +135,15 @@ EOF
 case_packaging() {
   grep -q -- '--common' "$ROOT/cmake/package_pkg.sh" || fail "package_pkg.sh needs --common"
   grep -q -- '--ctl' "$ROOT/cmake/package_pkg.sh" || fail "package_pkg.sh needs --ctl"
-  grep -q 'usr/local/libexec/mavergreen/docker/docker-machine-common.sh' "$ROOT/cmake/package_pkg.sh" \
+  grep -q 'T/libexec/docker-machine-common.sh' "$ROOT/cmake/package_pkg.sh" \
     || fail "package_pkg.sh must install docker-machine-common.sh"
-  grep -q 'usr/local/bin/docker-machine-ctl' "$ROOT/cmake/package_pkg.sh" \
+  grep -q 'T/bin/docker-machine-ctl' "$ROOT/cmake/package_pkg.sh" \
     || fail "package_pkg.sh must install docker-machine-ctl"
   grep -q -- '--common payload/docker-machine-common.sh' "$ROOT/.github/workflows/release.yml" \
     || fail "release.yml must pass --common"
   grep -q -- '--ctl payload/docker-machine-ctl' "$ROOT/.github/workflows/release.yml" \
     || fail "release.yml must pass --ctl"
-  grep -q 'usr/local/bin/docker-machine-migrate' "$ROOT/cmake/package_pkg.sh" \
+  grep -q 'T/bin/docker-machine-migrate' "$ROOT/cmake/package_pkg.sh" \
     || fail "package_pkg.sh must install docker-machine-migrate"
   grep -q -- '--migrate payload/docker-machine-migrate' "$ROOT/.github/workflows/release.yml" \
     || fail "release.yml must pass --migrate"

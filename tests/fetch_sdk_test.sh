@@ -1,4 +1,5 @@
 #!/bin/sh
+# platform: host-agnostic
 # Checks the pinned SDK fetch script (now the shared mavericks-shipyard copy, path
 # passed as $1 from the ctest def). Verifies the pin + durable cache + tapi normalization.
 set -eu

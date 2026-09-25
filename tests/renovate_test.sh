@@ -1,4 +1,5 @@
 #!/bin/sh
+# platform: host-agnostic
 # renovate.json (under .github/ since 777814d) is valid JSON and declares a
 # customManager for components/*/version.
 set -eu
