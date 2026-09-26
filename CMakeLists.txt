@@ -30,11 +30,11 @@ if(MAVERICKS_DOCKER_EXPECTED_MODE STREQUAL "iso")
   set(MAVERICKS_DOCKER_MODE "iso")
 else()
   set(MAVERICKS_DOCKER_MODE "cross")
-  # Native 10.9 Go toolchain. Prefer the mavericks-golang native .pkg (/usr/local/go126):
+  # Native 10.9 Go toolchain. Prefer the mavericks-golang native .pkg (/usr/local/mavergreen/go126):
   # its go.env ships the CC wrapper the build relies on (SDK + target flags + legacy shim). pkgsrc go126
   # (/opt/pkg/go126) is a fallback that only works once that wrapper is upstreamed into it.
   set(MAVERICKS_DOCKER_NATIVE_GO "")
-  foreach(_cand "/usr/local/go126/bin/go" "/opt/pkg/go126/bin/go")
+  foreach(_cand "/usr/local/mavergreen/go126/bin/go" "/opt/pkg/go126/bin/go")
     if(EXISTS "${_cand}")
       set(MAVERICKS_DOCKER_NATIVE_GO "${_cand}")
       break()

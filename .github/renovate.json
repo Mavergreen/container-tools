@@ -29,7 +29,7 @@
       ],
       "matchStrings": ["^(?<currentValue>.+?)\\s*$"],
       "depNameTemplate": "mavericks-golang",
-      "packageNameTemplate": "Mavergreen/golang",
+      "packageNameTemplate": "Mavergreen/golang-126",
       "datasourceTemplate": "github-releases",
       "extractVersionTemplate": "^v?(?<version>.+)$",
       "versioningTemplate": "regex:^(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)-mavericks\\.(?<build>\\d+)$"
