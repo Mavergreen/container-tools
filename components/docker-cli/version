@@ -1,3 +1,3 @@
 REPO=https://github.com/docker/cli.git
-REF=v29.8.1
-DIGEST=4a63305d74332de5ceba7fcbccbc3cbb7412f5ba
+REF=v29.8.2
+DIGEST=7fc2dff9bceb96b266a3b2c3117c0955a0d9e616
