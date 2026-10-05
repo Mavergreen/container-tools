@@ -16,3 +16,4 @@ CMakeUserPresets.json
 .superpowers/
 docs/
 /VERSION
+/.idea/
