@@ -121,7 +121,8 @@ jobs:
           ver="$(cat components/golang/version)"
           base="https://github.com/Mavergreen/golang-126/releases/download/${ver}"
           dl="$MAVERICKS_BUILD_ROOT/container-tools-golang-dl"; mkdir -p "$dl"; cd "$dl"
-          curl -fL --retry 3 -o SHA256SUMS "$base/SHA256SUMS"
+          . "$SHIPYARD_SCRIPTS/mavericks_fetch.sh"
+          shipyard_curl "$base/SHA256SUMS" SHA256SUMS
           # golang renamed its cross asset prefix go126- -> golang- at 1.26.5-mavericks.1; accept either.
           gover="${ver%%-mavericks.*}"; rev="${ver#*-}"; pkg=""; sum=""
           for pref in golang go126; do
@@ -130,7 +131,7 @@ jobs:
             if [ -n "$s" ]; then pkg="$cand"; sum="$s"; break; fi
           done
           [ -n "$pkg" ] || { echo "::error::no cross pkg for $ver in golang SHA256SUMS"; exit 1; }
-          curl -fL --retry 3 -o "$pkg" "$base/$pkg"
+          shipyard_curl "$base/$pkg" "$pkg"
           printf '%s\n' "$sum" | shasum -a 256 -c -
           sudo installer -pkg "$pkg" -target /
           echo "/usr/local/mavergreen/go126-cross/bin" >> "$GITHUB_PATH"

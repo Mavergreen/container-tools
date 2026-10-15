@@ -103,8 +103,8 @@ sh "$SHIPYARD/stage_product.sh" --stage "$stage" --product container-tools \
 # staged helper parses + defines the function.
 sh "$SHIPYARD/assert_gui_relaunch_safe.sh" "$scripts/postinstall" >&2
 sh -n "$scripts/postinstall" || { echo "package_pkg: assembled postinstall has a syntax error" >&2; exit 1; }
-sh -c '. "$1"; command -v mav_stop_gui_instance >/dev/null' _ "$scripts/stop-gui.sh" \
-  || { echo "package_pkg: staged stop-gui.sh does not define mav_stop_gui_instance" >&2; exit 1; }
+sh -c '. "$1"; command -v shipyard_stop_gui_instance >/dev/null' _ "$scripts/stop-gui.sh" \
+  || { echo "package_pkg: staged stop-gui.sh does not define shipyard_stop_gui_instance" >&2; exit 1; }
 
 # --- flat component pkg over the whole payload, with the agent-loading postinstall ---
 # Component pkg via the shared helper: it forces install-in-place -- BundleIsRelocatable=false, so the
