@@ -3,14 +3,20 @@
 Everything baked into the shipped `.pkg`, and how a change to it reaches a release. An *ingredient* is
 an input to the product; the *own upstream* is the thing a repo exists to port.
 
-**This repo has no single own upstream.** It assembles several independent docker components, so its
-version is date-based (`<date>-mavericks.N`) and its repackage caller runs with
-`own-upstream-paths: ""` — every pin under `components/` is an ingredient, and any of them moving is a
-repackage of the same date-stamped product.
+**This repo is its own upstream.** It assembles several independent docker components around its own
+code (`cmake/`, `menubar/`, `payload/`, the updater), so it versions itself by date, `YYYYMMDD.N`, with
+no `-mavericks.N` axis. `UPSTREAM_VERSION` is the date this repo's own code last changed:
+
+- A release carrying any change besides ingredient pins sets `UPSTREAM_VERSION` to that day (by hand,
+  in the same change) and ships as `<date>.1`.
+- An ingredient-only repackage keeps the date and ships as `<date>.(N+1)`. The repackage caller runs
+  with `own-upstream-paths: ""`, so every pin under `components/` is an ingredient.
+
+Releases through `20260727-mavericks.37` used the port scheme. Sparkle orders `20261018.1` after them.
 
 | Ingredient | Pinned in | Renovate | On a bump |
 |---|---|---|---|
-| docker CLI | `components/docker-cli/version` (`REPO=` + `REF=` + `DIGEST=`) | ✅ `git-refs` + `currentDigest` | watched path → repackage dispatched → `-mavericks.(N+1)` |
+| docker CLI | `components/docker-cli/version` (`REPO=` + `REF=` + `DIGEST=`) | ✅ `git-refs` + `currentDigest` | watched path → repackage dispatched → `<date>.(N+1)` |
 | docker CLI patch overlay | `components/docker-cli/patches/*.patch` | n/a (this repo's own fix) | **is** an ingredient — it is applied into the built binary, so a change rebuilds it |
 | docker Compose | `components/docker-compose/version` | ✅ `git-refs` + `currentDigest` | same |
 | docker Machine | `components/docker-machine/version` | ✅ `git-refs` + `currentDigest` | same |
@@ -21,8 +27,9 @@ repackage of the same date-stamped product.
 | Mavergreen Go cross toolchain | `components/golang/version` | ✅ `github-releases` on `Mavergreen/golang-126` | watched path → repackage rebuilt on the new Go |
 | MacOSX10.9 SDK, Sparkle framework | `Mavergreen/shipyard@v1` | ✅ github-actions manager tracks the tag | `@v1` is a *moving* tag: content changes without the pin changing, so nothing auto-repackages |
 
-Not ingredients: `cmake/`, `menubar/`, `payload/`, and the updater are this repo's own recipe. A change
-there is a repackage you cut deliberately (`workflow_dispatch` with `local_release=true`).
+Not ingredients: `cmake/`, `menubar/`, `payload/`, and the updater are this repo's own code. A change
+there moves `UPSTREAM_VERSION` to the day of the change, and you cut the release deliberately
+(`workflow_dispatch` with `local_release=true`), which ships `<date>.1`.
 
 ## Why the patch counts as an ingredient
 
@@ -44,3 +51,7 @@ green CI as proof the iso boots.
 No upstream release notes: there is no single upstream to link. The product bundles six components
 (docker-cli, docker-compose, docker-machine, lazydocker, boot2docker, golang), each an ingredient
 with its own pin; their changes are named in each release's generated "Build ingredients" section.
+
+## Conformance deviations
+
+- scheme: Container Tools is its own upstream (its own code around bundled ingredients, no single release of someone else's to repackage), so it versions itself by date as YYYYMMDD.N with no -mavericks.N axis

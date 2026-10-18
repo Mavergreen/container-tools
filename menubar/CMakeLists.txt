@@ -12,7 +12,8 @@ set(MAVERICKS_REQUIRE_LANGS OBJC)
 include(Mavericks)   # AppleClang gate + build conventions
 
 # Version from the repo root (this project's source dir is menubar/), derived not committed.
-mavericks_resolve_version(MAVERICKS_DOCKER_VERSION ROOT "${CMAKE_SOURCE_DIR}/..")
+include("${CMAKE_SOURCE_DIR}/../cmake/ContainerToolsVersion.cmake")
+container_tools_version(MAVERICKS_DOCKER_VERSION "${CMAKE_SOURCE_DIR}/..")
 
 # App icon: the product's shipping-container art (deliberately NOT a whale — see
 # updater/ICON-CREDIT.txt), single-sourced from updater/ where the .icns is generated

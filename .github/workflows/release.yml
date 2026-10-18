@@ -2,9 +2,10 @@ name: release
 
 # Build the 10.9-compatible docker toolchain (CLI + Compose + Machine) on macos-26, build the
 # boot2docker.iso on Linux, build the Sparkle updater, assemble + sign the product .pkg, and attach
-# the .pkg + signed appcast to a GitHub Release on v* tags.
+# the .pkg + signed appcast to a GitHub Release when a workflow_dispatch asks for one.
 #
-# Ships a FULL release on each v* tag -- no manual prerelease/promotion dance. CI proves the build +
+# Container Tools is its own upstream, versioned YYYYMMDD.N (see the ver job). Every publish is a FULL
+# release -- no manual prerelease/promotion dance. CI proves the build +
 # gates pass; a modern runner can't boot-proof the iso, so the boot-proof auto-skips (ctest code 77)
 # and Sparkle surfaces any real-10.9 breakage. boot2docker updates flow the normal Renovate way: the
 # bump PR builds the iso from the pinned source and runs the CI-possible gates (see boot2docker.yml)
@@ -15,13 +16,13 @@ name: release
 on:
   push:
     branches: [main]        # signal: build+gate every main push (surfaces a bump that broke something)
-    tags: ['*-mavericks.*']  # tags additionally package, sign, and publish a release
   pull_request:
     branches: [main]          # PR build is the status check Renovate automerge waits on
   workflow_dispatch:
     inputs:
+      # The name is what shipyard's repackage-on-ingredient-bump.yml dispatches (local_release=true).
       local_release:
-        description: "Cut+publish a -mavericks.(N+1) repackage (same date, rebuilt with current ingredients)"
+        description: "Cut+publish <UPSTREAM_VERSION>.(N+1): .1 after a date bump, else a same-date repackage"
         type: boolean
         default: false
 
@@ -29,7 +30,7 @@ permissions:
   contents: write
 
 # Only a pull_request supersedes -- keyed per ref, so a force-push replaces its own predecessor.
-# Everything else (a branch push, a *-mavericks.* tag, a workflow_dispatch) is keyed per RUN and is
+# Everything else (a branch push, a workflow_dispatch) is keyed per RUN and is
 # therefore alone in its group: never queued, never evicted, never cancelled.
 #
 # cancel-in-progress:false was never the protection it looked like: it protects the RUNNING job and
@@ -37,7 +38,7 @@ permissions:
 # the old shared group discarded runs silently. golang lost one on 2026-09-09, 13 seconds after the
 # run that evicted it.
 #
-# This repo publishes only from a tag or a dispatch, but keeps the family's one shape: most of the
+# This repo publishes only from a dispatch, but keeps the family's one shape: most of the
 # family's product repos auto-cut on a push to main, and a rule that holds only in some of them is a
 # rule nobody can apply from memory.
 concurrency:
@@ -47,15 +48,60 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  build-macos:
-    runs-on: macos-26
+  # One job decides the version and whether this run publishes; every other job reads its outputs.
+  # build-macos and build-iso once resolved the version separately and disagreed (.15 vs .14 in one
+  # run), so there is exactly one place that computes it.
+  #
+  # Container Tools is its own upstream (INGREDIENTS.md): UPSTREAM_VERSION is the date this repo's own
+  # code last changed, and a release is <date>.N. N = 1 + the highest <date>.* tag, so the first release
+  # after a date bump is .1 and an ingredient-only repackage on the same date is .(N+1). Derived from
+  # tags, never from a file: a dispatch-cut version is not committed back.
+  ver:
+    runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.ver.outputs.version }}
       publish: ${{ steps.ver.outputs.publish }}
     steps:
       - uses: actions/checkout@v7
+        with: { fetch-depth: 0, persist-credentials: false }
+      - name: Version (YYYYMMDD.N) + publish decision
+        id: ver
+        env:
+          LOCAL_RELEASE: ${{ github.event.inputs.local_release }}
+        run: |
+          set -eu
+          base="$(tr -d '[:space:]' < UPSTREAM_VERSION)"
+          case "$base" in
+            [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]) : ;;
+            *) echo "::error::UPSTREAM_VERSION must be a bare YYYYMMDD date, not '$base'"; exit 1 ;;
+          esac
+          maxn=0
+          for t in $(git tag --list "$base.*"); do
+            n="${t##*.}"
+            case "$n" in ''|*[!0-9]*) : ;; *) [ "$n" -gt "$maxn" ] && maxn="$n" ;; esac
+          done
+          ver="$base.$((maxn + 1))"
+          publish=false
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ "$LOCAL_RELEASE" = true ]; then
+            publish=true
+          fi
+          { echo "version=$ver"; echo "publish=$publish"; } >> "$GITHUB_OUTPUT"
+          echo "version=$ver publish=$publish"
+
+  # platform: build-macos is main's required check, and GitHub counts a SKIPPED required check as
+  #           passing, so build-macos runs even when ver fails, and then fails first.
+  build-macos:
+    needs: ver
+    if: ${{ !cancelled() }}
+    runs-on: macos-26
+    steps:
+      - name: The ver job succeeded
+        env:
+          VER_RESULT: ${{ needs.ver.result }}
+        run: '[ "$VER_RESULT" = success ] || { echo "::error::ver ended $VER_RESULT, so this build has no version to build"; exit 1; }'
+      - uses: actions/checkout@v7
         with:
-          fetch-depth: 0   # a local_release repackage counts existing <upstream>-mavericks.* tags
+          fetch-depth: 0   # generated notes and the shipyard install expect full history
 
       # shipyard installs itself via its own action (self-registering in the CMake user package
       # registry); consumed thereafter via find_package. @v1 is the moving major tag (Renovate tracks it).
@@ -81,35 +127,12 @@ jobs:
       - name: Guard the ingredient pin declaration
         run: sh "$SHIPYARD_SCRIPTS/check-ingredient-pins.sh"
 
-      # Three ways in here decide two things: what VER is, and whether this run publishes. The
-      # arithmetic is NOT here: resolve-version.sh (shared) derives <upstream>-mavericks.N from the
-      # committed UPSTREAM_VERSION plus the shipped tags, and writes VERSION as a build product so this
-      # job's cmake configure and the updater bundle embed the same string.
-      #   - a *-mavericks.* tag: VER = the tag; publish=yes. (No "tag must equal the committed VERSION"
-      #     check any more -- there is no committed VERSION. That check was unsatisfiable: the file said
-      #     .2 while releases were at .14, so a tag build could not have passed it.)
-      #   - workflow_dispatch(local_release=true): a repackage -- VER = <upstream>-mavericks.(N+1) from
-      #     the tags; publish=yes. Derived from tags, never from a file: a dispatch-cut version is not
-      #     committed back, so reading a file would recompute the same N+1 on the next ingredient bump
-      #     and OVERWRITE that release instead of cutting the next one.
-      #   - anything else (push to main / PR): the shipped N; publish=no.
-      - name: Decide version + whether this run publishes
-        id: ver
-        run: |
-          # The MODE comes from release-mode.sh so that build-iso, which has no way to know a
-          # repackage is in progress, reaches the same answer. They disagreed once: .15 here, .14
-          # there, in one run.
-          MODE="$(LOCAL_RELEASE="${{ github.event.inputs.local_release }}" sh "$SHIPYARD_SCRIPTS/release-mode.sh")"
-          if [ "${GITHUB_REF_TYPE}" = tag ]; then
-            VER="${GITHUB_REF_NAME}"
-            printf '%s\n' "$VER" > VERSION
-            PUBLISH=true
-          else
-            VER="$(sh "$SHIPYARD_SCRIPTS/resolve-version.sh" "$MODE")"
-            [ "$MODE" = local ] && PUBLISH=true || PUBLISH=false
-          fi
-          echo "version=$VER" >> "$GITHUB_OUTPUT"
-          echo "publish=$PUBLISH" >> "$GITHUB_OUTPUT"
+      # VERSION is a gitignored build product: cmake (cmake/ContainerToolsVersion.cmake) reads it, so
+      # the configure below and the updater bundle embed the version the ver job decided.
+      - name: Write the version this run builds
+        env:
+          VER: ${{ needs.ver.outputs.version }}
+        run: printf '%s\n' "$VER" > VERSION
 
       # The 10.9-correct Go toolchain (patched mavericks-golang cross .pkg; see the comment history).
       - name: Install patched Go (mavericks-golang cross toolchain)
@@ -183,7 +206,7 @@ jobs:
       # On tags: bundle the packaging inputs into ONE tarball so executable bits (binaries, the .app's
       # Mach-Os, the signer) survive the artifact round-trip -- artifacts otherwise drop file modes.
       - name: Stage + upload packaging inputs
-        if: steps.ver.outputs.publish == 'true'
+        if: needs.ver.outputs.publish == 'true'
         run: |
           export COPYFILE_DISABLE=1
           CROSS="$CROSS_BUILD_DIR"
@@ -200,7 +223,7 @@ jobs:
           # binaries and an iso built on Linux -- so the risk worth catching is them coming from
           # different commits (a re-run, a stale artifact). Conformance compares the records.
           sh "$SHIPYARD_SCRIPTS/build-info.sh" build-info-macos.txt \
-            variant=macos commit="$GITHUB_SHA" version="${{ steps.ver.outputs.version }}" \
+            variant=macos commit="$GITHUB_SHA" version="${{ needs.ver.outputs.version }}" \
             docker_cli="$(sed -n 's/^REF=//p' components/docker-cli/version)" \
             docker_compose="$(sed -n 's/^REF=//p' components/docker-compose/version)" \
             docker_machine="$(sed -n 's/^REF=//p' components/docker-machine/version)" \
@@ -208,7 +231,7 @@ jobs:
             lazydocker_digest="$(sed -n 's/^DIGEST=//p' components/lazydocker/version)" \
             golang_toolchain="$(cat components/golang/version)"
       - name: Upload packaging inputs (publishing runs only)
-        if: steps.ver.outputs.publish == 'true'
+        if: needs.ver.outputs.publish == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: packaging-inputs
@@ -219,16 +242,16 @@ jobs:
   # boot2docker.iso on native Linux/Docker (macos-26 can't build it). We only BUILD the iso here for the
   # .pkg; the source is digest-verified at clone time (clone_pinned.sh in the boot2docker DOWNLOAD_COMMAND
   # bails unless the checkout is the pinned commit). boot2docker.yml is the CI gate on bump PRs; runtime
-  # issues in a shipped iso are fixed in a -mavericks.2 repackage. Gated the same way build-macos's
-  # "publish" decision is (tag, or workflow_dispatch local_release=true) -- duplicated as a raw expression
-  # rather than a `needs: [build-macos]` edge, so this job keeps running in parallel with build-macos.
+  # issues in a shipped iso are fixed in a same-date .(N+1) repackage. Runs only when this run
+  # publishes, and needs only ver (not build-macos), so it keeps running in parallel with build-macos.
   build-iso:
-    if: github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && github.event.inputs.local_release == 'true')
+    needs: ver
+    if: needs.ver.outputs.publish == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
         with:
-          fetch-depth: 0   # cmake resolves the version from the tags now, in this job too
+          fetch-depth: 0
       # clone_pinned.sh lives in shipyard; the iso build resolves it via find_package.
       - name: Install mavericks-shipyard
         uses: Mavergreen/shipyard/.github/actions/install@v1
@@ -256,15 +279,12 @@ jobs:
       - name: Derive the iso build directory
         run: echo "ISO_BUILD_DIR=${TMPDIR:-/tmp}/mm-build/$(basename "$PWD")-iso" >> "$GITHUB_ENV"
 
-      # Resolve the version BEFORE configuring, using the run's mode -- otherwise this job derives the
-      # shipped N while build-macos derives N+1, and one .pkg is built from two versions. A tag build
-      # needs no special case: the tag exists by now, so auto returns exactly it.
-      - name: Resolve the version this run is building
+      # The same version build-macos writes, from the same ver job, BEFORE configuring -- so one .pkg
+      # is never built from two versions.
+      - name: Write the version this run builds
         env:
-          LOCAL_RELEASE: ${{ github.event.inputs.local_release }}
-        run: |
-          VER="$(sh "$SHIPYARD_SCRIPTS/resolve-version.sh" "$(sh "$SHIPYARD_SCRIPTS/release-mode.sh")")"
-          echo "iso job building $VER"
+          VER: ${{ needs.ver.outputs.version }}
+        run: printf '%s\n' "$VER" > VERSION
 
       - name: Build the boot2docker iso (same cmake iso build the box runs)
         run: |
@@ -291,8 +311,8 @@ jobs:
   # Assemble + sign the product .pkg and render the signed appcast. Needs the mac binaries/updater and
   # the iso; runs on macos-26 for pkgbuild/productbuild.
   package:
-    if: needs.build-macos.outputs.publish == 'true'
-    needs: [build-macos, build-iso]
+    if: needs.ver.outputs.publish == 'true'
+    needs: [ver, build-macos, build-iso]
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v7
@@ -305,21 +325,18 @@ jobs:
       - uses: actions/download-artifact@v8
         with: { name: boot2docker-iso, path: iso }
 
-      # This job's checkout is fresh (a separate runner from build-macos), so it does NOT see the
-      # VERSION mutation build-macos made locally for a local_release repackage. Use the authoritative
-      # version build-macos decided (needs.build-macos.outputs.version), not `cat VERSION`. This repo
-      # has no external upstream tag axis, so its own version string doubles as the release tag.
+      # This job's checkout is fresh (a separate runner from build-macos), so it has no VERSION file.
+      # Use the authoritative version the ver job decided (needs.ver.outputs.version), not
+      # `cat VERSION`. This repo is its own upstream, so its version string doubles as the release tag.
       #
       # release-notes.sh derives the ingredient section itself, from the pins
       # repackage-on-ingredient-bump.yml watches -- no separate ingredient-pins.sh/ingredient-notes.sh
       # calls here, and no stubbed prose: a repackage that cannot say what moved must not ship.
       #
-      # --product is the BARE noun "Container Tools", not "Container Tools for Mavericks": this
-      # repo's own version/tag scheme is <date>-mavericks.N (resolve-version.sh, an UPSTREAM_VERSION
-      # file), which the generator's title logic reads as the PORT shape (it has a "-mavericks." axis
-      # to split on), not the true self-upstream shape (bare YYYYMMDD.N, no "-mavericks."). The port
-      # template already appends " for Mavericks" itself, so passing the full descriptor here would
-      # double it.
+      # --product is the full prose name "Container Tools for Mavericks": a YYYYMMDD.N version is the
+      # generator's self-upstream shape, whose title is "## <product> <version>" with nothing appended
+      # (the -mavericks.N port shape appended " for Mavericks" itself, which is why this once passed
+      # the bare noun).
       - name: Copy build-info records into dist
         run: |
           set -eu
@@ -333,12 +350,12 @@ jobs:
 
       - name: Generate release notes
         env:
-          VER: ${{ needs.build-macos.outputs.version }}
+          VER: ${{ needs.ver.outputs.version }}
         run: |
           set -eu
           sh "$SHIPYARD_SCRIPTS/release-notes.sh" \
             --tag "$VER" --version "$VER" \
-            --product "Container Tools" --min-os 10.9.5 \
+            --product "Container Tools for Mavericks" --min-os 10.9.5 \
             --out dist/RELEASE_NOTES.md   # becomes the Release body; not attached as an asset
           echo "=== dist/RELEASE_NOTES.md ==="; cat dist/RELEASE_NOTES.md
 
@@ -346,7 +363,7 @@ jobs:
         env:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
           GH_TOKEN: ${{ github.token }}   # sign_and_appcast.sh fetches ed25519-sign via `gh` -> needs auth (else 403 rate-limit)
-          VER: ${{ needs.build-macos.outputs.version }}
+          VER: ${{ needs.ver.outputs.version }}
         run: |
           # printenv, not [ -n "$SPARKLE_PRIVATE_KEY" ]: the shell never expands the key, so no trace can print it
           printenv SPARKLE_PRIVATE_KEY | grep -q . || { echo "::error::SPARKLE_PRIVATE_KEY secret not set"; exit 1; }
@@ -385,7 +402,7 @@ jobs:
       # other and with the family's schemes. This job only runs when publishing, so no extra gate.
       - name: Artifact conformance
         env:
-          VER: ${{ needs.build-macos.outputs.version }}
+          VER: ${{ needs.ver.outputs.version }}
         run: |
           sh "$SHIPYARD_SCRIPTS/artifact-facts.sh" dist "$VER" \
             | sh "$SHIPYARD_SCRIPTS/check-artifact-conformance.sh"
@@ -408,8 +425,8 @@ jobs:
   # piece of the signing key. shipyard's publish-release.yml looks for this job's record on any signed
   # release; it cannot run the scan itself (reading job logs needs actions: read).
   scan:
-    needs: [build-macos, package]
-    if: always() && (needs.build-macos.outputs.publish == 'true')   # a build that fails after signing left logs too; scan them
+    needs: [ver, build-macos, package]
+    if: always() && (needs.ver.outputs.publish == 'true')   # a build that fails after signing left logs too; scan them
     permissions:
       actions: read     # this run's job logs
       contents: read
@@ -424,11 +441,11 @@ jobs:
   # (failing if it is missing or empty), and mints the tag at this commit, which a dispatch-cut
   # repackage needs since a GITHUB_TOKEN-pushed tag triggers nothing.
   publish:
-    if: needs.build-macos.outputs.publish == 'true'
-    needs: [build-macos, package, scan]
+    if: needs.ver.outputs.publish == 'true'
+    needs: [ver, build-macos, package, scan]
     permissions:
       contents: write
     uses: Mavergreen/shipyard/.github/workflows/publish-release.yml@v1
     with:
-      version: ${{ needs.build-macos.outputs.version }}
+      version: ${{ needs.ver.outputs.version }}
       artifact: docker-pkg

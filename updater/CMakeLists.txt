@@ -18,7 +18,8 @@ include(MavericksSparkle)   # the Sparkle updater .app builder
 
 # Single-source the version from the repo root (this project's source dir is updater/). Derived
 # from UPSTREAM_VERSION + the shipped tags, not read from a committed file.
-mavericks_resolve_version(MAVERICKS_DOCKER_VERSION ROOT "${CMAKE_SOURCE_DIR}/..")
+include("${CMAKE_SOURCE_DIR}/../cmake/ContainerToolsVersion.cmake")
+container_tools_version(MAVERICKS_DOCKER_VERSION "${CMAKE_SOURCE_DIR}/..")
 
 mavericks_add_updater_app(
   PRODUCT container-tools

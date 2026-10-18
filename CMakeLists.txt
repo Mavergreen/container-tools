@@ -11,14 +11,14 @@ project(mavericks_docker LANGUAGES NONE)
 # Found up here rather than further down because the version resolution below needs it.
 find_package(MavericksShipyard REQUIRED)
 
-# The product version (feeds the .pkg name + the release tag). NOT passed to project(VERSION ...): the
-# mavericks scheme (20260727-mavericks.15) is not a valid CMake version, and nothing here needs
-# PROJECT_VERSION -- MAVERICKS_DOCKER_VERSION carries it.
+# The product version (feeds the .pkg name + the release tag). Nothing here needs PROJECT_VERSION --
+# MAVERICKS_DOCKER_VERSION carries it.
 #
-# Derived, never committed: UPSTREAM_VERSION plus the shipped tags decide it, and VERSION is written as
-# a build product. The committed VERSION this replaces had drifted to 20260727-mavericks.2 while
-# releases were at .14 -- which also made the tag path (it asserted tag == VERSION) unsatisfiable.
-mavericks_resolve_version(MAVERICKS_DOCKER_VERSION)
+# Derived, never committed: release.yml computes it from UPSTREAM_VERSION plus the shipped tags and
+# writes VERSION as a build product. The committed VERSION this replaces had drifted to
+# 20260727-mavericks.2 while releases were at .14.
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/ContainerToolsVersion.cmake")
+container_tools_version(MAVERICKS_DOCKER_VERSION "${CMAKE_CURRENT_SOURCE_DIR}")
 
 set(CMAKE_OSX_DEPLOYMENT_TARGET 10.9)
 set(CMAKE_OSX_ARCHITECTURES x86_64)
