@@ -139,29 +139,16 @@ jobs:
         run: |
           # Renovate bumps components/golang/version via the '# mavericks-golang' customManager in
           # .github/renovate.json (github-releases on Mavergreen/golang-126). No pinned sha256 to
-          # hand-maintain: we verify the download against golang's own published SHA256SUMS for the
-          # pinned release.
-          ver="$(cat components/golang/version)"
-          base="https://github.com/Mavergreen/golang-126/releases/download/${ver}"
-          dl="$MAVERICKS_BUILD_ROOT/container-tools-golang-dl"; mkdir -p "$dl"; cd "$dl"
-          . "$SHIPYARD_SCRIPTS/mavericks_fetch.sh"
-          shipyard_curl "$base/SHA256SUMS" SHA256SUMS
-          # golang renamed its cross asset prefix go126- -> golang- at 1.26.5-mavericks.1; accept either.
-          gover="${ver%%-mavericks.*}"; rev="${ver#*-}"; pkg=""; sum=""
-          for pref in golang go126; do
-            cand="${pref}-${gover}-cross-${rev}.pkg"
-            s=$(awk -v f="$cand" '$2==f' SHA256SUMS || true)
-            if [ -n "$s" ]; then pkg="$cand"; sum="$s"; break; fi
-          done
-          [ -n "$pkg" ] || { echo "::error::no cross pkg for $ver in golang SHA256SUMS"; exit 1; }
-          shipyard_curl "$base/$pkg" "$pkg"
-          printf '%s\n' "$sum" | shasum -a 256 -c -
-          sudo installer -pkg "$pkg" -target /
-          echo "/usr/local/mavergreen/go126-cross/bin" >> "$GITHUB_PATH"
+          # hand-maintain: install_go.sh verifies against golang's own SHA256SUMS for the pinned
+          # release, and puts the toolchain where that release's build-info-cross.txt says it lives,
+          # so a bump that moves the prefix follows it instead of failing here.
+          bin="$(sh cmake/install_go.sh "$(cat components/golang/version)")"
+          echo "$bin" >> "$GITHUB_PATH"
+          echo "GO_CROSS_BIN=$bin" >> "$GITHUB_ENV"
 
       - name: Confirm the patched cross toolchain is on PATH
         run: |
-          test "$(command -v go)" = /usr/local/mavergreen/go126-cross/bin/go
+          test "$(command -v go)" = "$GO_CROSS_BIN/go"
           go version
 
       - name: Cache the MacOSX10.9 SDK
