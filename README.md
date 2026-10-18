@@ -1,43 +1,34 @@
 # Container Tools for Mavericks
 
-docker, docker compose, docker-machine, and lazydocker for OS X 10.9. The daemon
-runs in a Linux VM (VMware Fusion 8); docker-machine manages it.
+Docker runtime and CLI tools for Mac OS X 10.9 Mavericks.
 
-## Setup
+(Docker Desktop for Mac requires macOS 14 Sonoma or later.)
 
-Install VMware Fusion, then bring the Docker VM up once:
+## How to use
 
-```sh
-docker-machine-bootstrap
-```
+1. If the Container Tools menu shows "Get VMware Fusion...", select it
+2. Once the Fusion installer has been downloaded, install it
+3. In the Container Tools menu, within a minute, you'll see "Docker: Starting..."
+4. Wait for it to say "Docker: Running"
 
-It creates the VM from the bundled image (first run only, ~1-2 min in a Terminal),
-starts it, and points a `docker` **context** named `mavericks` at it — so `docker`,
-`docker compose`, and `lazydocker` just work in any shell, with no environment
-variables to set. `docked IMAGE CMD` runs a container with `$PWD` at `/work/`.
+On reboot, the Docker VM and the Container Tools menu will start automatically.
 
-To start the VM automatically at login:
+## Included
 
-```sh
-launchctl load -w /Library/LaunchAgents/dev.mavergreen.container-tools-machine.plist
-```
+- `docker`
+- `docker compose`
+- `docker-machine`
+- `lazydocker`
+- `docked`
 
-## Updates
+## Coming from Mavericks Forever
 
-The package updates itself, and after each update offers to roll your VM onto the
-new image — nothing to run by hand.
+If you're using Wowfunhappy's Docker for Mavericks (from which this repo is derived), Container Tools handles the update for you:
 
-## Notes
+- Your `default` VM gets renamed to `container-tools` with its data intact (if it's running, a notification asks you to `docker-machine stop default` first)
+- Your shell profile's `eval "$(docker-machine env ...)"` lines get commented out (with a backup as `<profile>.premigrate`)
 
-- The commands install into `/usr/local/mavergreen/container-tools/bin`, on your PATH through
-  `/usr/local/mavergreen/bin`. If Docker Desktop is also installed, its `/usr/local/bin/docker`
-  comes first on PATH and shadows this one.
-- If `docker` says "cannot connect," the VM is stopped — run `docker-machine-bootstrap`
-  (or start it from the menu bar) and retry.
-- Migrating from an older setup? Remove any `eval "$(docker-machine env …)"` or
-  hardcoded `DOCKER_HOST=` line from your shell profile — it overrides the managed
-  context. The bootstrap will notify you if it finds one.
-- The VM appears in VMware Fusion as "container-tools"; adjust CPU/RAM in its Settings.
-- Coming from Wowfunhappy's DMG or another setup with a `default` VM? Run `docker-machine-ctl migrate`
-  once (with the VM stopped) to rename it to `container-tools`, preserving your data.
-- boot2docker.iso: https://github.com/dragonflylee/boot2docker/
+## Troubleshooting
+
+- Logs: `~/Library/Logs/Mavergreen/container-tools/bootstrap.log`
+- CPU and RAM: Adjust "container-tools" VM settings in VMware Fusion
