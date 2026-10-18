@@ -55,3 +55,4 @@ with its own pin; their changes are named in each release's generated "Build ing
 ## Conformance deviations
 
 - scheme: Container Tools is its own upstream (its own code around bundled ingredients, no single release of someone else's to repackage), so it versions itself by date as YYYYMMDD.N with no -mavericks.N axis
+- unlinked:components/boot2docker/version:BASE: a Debian slim base-image refresh publishes no change notes
