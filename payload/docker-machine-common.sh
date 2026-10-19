@@ -23,6 +23,7 @@ STATE_DIR=${MAVERICKS_DOCKER_STATE_DIR:-$HOME/Library/Application Support/Maverg
 STATE_FILE="$STATE_DIR/state"
 LOCK="$STATE_DIR/creating.lock"
 OP_LOCK="$STATE_DIR/op.lock"   # generic in-progress marker for the ctl verbs (start/stop/restart/image-upgrade)
+USER_STOPPED="$STATE_DIR/user-stopped"   # the menu's Stop, for this boot: the login agent leaves the VM down
 PROFILES=${MAVERICKS_DOCKER_PROFILES:-$HOME/.bash_profile $HOME/.profile $HOME/.zshrc $HOME/.bashrc}
 AGENT_LABEL=dev.mavergreen.container-tools-machine
 AGENT_PLIST=/Library/LaunchAgents/$AGENT_LABEL.plist
@@ -77,6 +78,24 @@ op_in_progress() {
 }
 
 op_name() { cat "$OP_LOCK/name" 2>/dev/null || echo working; }
+
+# The login agent re-runs bootstrap every 60s, and bootstrap starts any Stopped VM -- so without a
+# record of intent, the menu's Stop was undone within a minute. ctl stop records it; every verb that
+# brings the VM up clears it. Scoped to one boot (kern.boottime): after a reboot, "Start Docker at
+# Login" means what it says again.
+boot_id() { echo "${MAVERICKS_DOCKER_BOOT_ID:-$(sysctl -n kern.boottime 2>/dev/null)}"; }
+mark_user_stopped() {
+  mkdir -p "$STATE_DIR" 2>/dev/null || true
+  boot_id > "$USER_STOPPED" 2>/dev/null || true
+}
+clear_user_stopped() { rm -f "$USER_STOPPED" 2>/dev/null || true; }
+user_stopped() { # true when the user stopped the VM during this boot; drops a marker from an earlier boot
+  [ -f "$USER_STOPPED" ] || return 1
+  [ "$(cat "$USER_STOPPED" 2>/dev/null)" = "$(boot_id)" ] && return 0
+  log "user-stopped marker is from an earlier boot; auto-start resumes"
+  clear_user_stopped
+  return 1
+}
 
 op_begin() { # name  — announce a long op: create the lock and mark the state working:<name>
   _op=${1:-working}   # tolerate a zero-arg call under the callers' `set -u`

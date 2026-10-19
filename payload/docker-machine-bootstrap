@@ -109,6 +109,10 @@ main() {
       _status=$(machine_status)
     fi
   fi
+  if [ "$_status" = "Stopped" ] && user_stopped; then
+    write_state "$(status_word)"
+    exit 0
+  fi
   [ "$_status" = "Running" ] || docker-machine start "$MACHINE" >>"$LOG" 2>&1 || true
   [ "$(machine_status)" = "Running" ] && sync_context
   neutralize_env_override

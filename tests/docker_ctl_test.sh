@@ -55,6 +55,44 @@ case_start_stop() {
   teardown
 }
 
+# The menu's Stop records that the user wants the VM down (for this boot), so the login agent's
+# 60s tick leaves it alone; anything that brings the VM up again clears that.
+UMARK() { echo "$MAVERICKS_DOCKER_STATE_DIR/user-stopped"; }
+case_stop_marks_user_stopped() {
+  setup; stub_dm Stopped
+  MAVERICKS_DOCKER_BOOT_ID=boot-A sh "$CTL" stop >/dev/null || fail "stop exit 0"
+  [ "$(cat "$(UMARK)" 2>/dev/null)" = boot-A ] || fail "stop must record user-stopped with this boot's id"
+  teardown
+}
+case_failed_stop_marks_nothing() {
+  setup
+  cat > "$BIN/docker-machine" <<EOF
+#!/bin/sh
+[ "\$1" = status ] && { echo Running; exit 0; }
+[ "\$1" = stop ] && exit 1
+exit 0
+EOF
+  chmod +x "$BIN/docker-machine"
+  MAVERICKS_DOCKER_BOOT_ID=boot-A sh "$CTL" stop >/dev/null && fail "a failed stop should exit non-zero"
+  [ -f "$(UMARK)" ] && fail "a failed stop must not mark the VM user-stopped"
+  teardown
+}
+case_up_verbs_clear_user_stopped() {
+  for verb in start restart image-upgrade; do
+    setup; stub_dm Running
+    mkdir -p "$MAVERICKS_DOCKER_STATE_DIR"; echo boot-A > "$(UMARK)"
+    MAVERICKS_DOCKER_BOOT_ID=boot-A sh "$CTL" "$verb" >/dev/null 2>&1 || :
+    [ -f "$(UMARK)" ] && fail "ctl $verb brings the VM up, so it must clear user-stopped"
+    teardown
+  done
+  setup
+  printf '#!/bin/sh\nexit 0\n' > "$BIN/docker-machine-bootstrap"; chmod +x "$BIN/docker-machine-bootstrap"
+  mkdir -p "$MAVERICKS_DOCKER_STATE_DIR"; echo boot-A > "$(UMARK)"
+  MAVERICKS_DOCKER_BOOT_ID=boot-A sh "$CTL" setup >/dev/null 2>&1 || :
+  [ -f "$(UMARK)" ] && fail "ctl setup (Set Up / Repair) must clear user-stopped so bootstrap brings the VM up"
+  teardown
+}
+
 # VM up on a NEW IP while the mavericks context still holds the OLD IP — the renumber that
 # makes `docker ps` hang. A running-VM verb must self-heal by re-pointing the context.
 # (docker-machine env reports the VM's real current IP, so detection never hangs on the stale one.)
@@ -229,6 +267,9 @@ case_start_announces() {
 
 case_status
 case_start_stop
+case_stop_marks_user_stopped
+case_failed_stop_marks_nothing
+case_up_verbs_clear_user_stopped
 case_image
 case_image_upgrade_fails
 case_start_announces

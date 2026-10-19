@@ -120,6 +120,43 @@ EOF
 case_create
 case_start
 
+# A VM the user stopped from the menu (ctl stop) stays stopped: the login agent's 60s tick must not
+# start it again. Only within the boot the stop happened in -- after a reboot, auto-start resumes.
+stub_stopped_vm() {
+  cat > "$BIN/docker-machine" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >> "$DM_LOG"
+case "\$1" in
+  status) echo Stopped ;;
+  start)  : > "$WORK/started" ;;
+  env)    echo 'export DOCKER_HOST="tcp://192.168.237.131:2376"'
+          echo "export DOCKER_CERT_PATH=\"$HOME/x\"" ;;
+esac
+EOF
+  chmod +x "$BIN/docker-machine"
+}
+case_user_stopped_stays_stopped() {
+  setup; make_docker; stub_stopped_vm
+  mkdir -p "$MAVERICKS_DOCKER_STATE_DIR"
+  echo boot-A > "$MAVERICKS_DOCKER_STATE_DIR/user-stopped"
+  MAVERICKS_DOCKER_BOOT_ID=boot-A sh "$BOOT" || fail "user-stopped tick should exit 0"
+  [ -f "$WORK/started" ] && fail "the login agent restarted a VM the user stopped (the menu's Stop must stick)"
+  [ "$(cat "$MAVERICKS_DOCKER_STATE_DIR/state")" = stopped ] || fail "a user-stopped tick should announce 'stopped'"
+  teardown
+}
+case_user_stopped_previous_boot() {
+  setup; make_docker; stub_stopped_vm
+  mkdir -p "$MAVERICKS_DOCKER_STATE_DIR"
+  echo boot-A > "$MAVERICKS_DOCKER_STATE_DIR/user-stopped"
+  MAVERICKS_DOCKER_BOOT_ID=boot-B sh "$BOOT" || fail "after-reboot tick should exit 0"
+  [ -f "$WORK/started" ] || fail "a stop from a previous boot must not keep the VM down after a reboot"
+  [ -f "$MAVERICKS_DOCKER_STATE_DIR/user-stopped" ] && fail "a stale user-stopped marker should be removed"
+  teardown
+}
+
+case_user_stopped_stays_stopped
+case_user_stopped_previous_boot
+
 # --- Case: running -> create context from docker-machine env, then use it ---
 case_context_create() {
   setup; make_dm; make_docker
