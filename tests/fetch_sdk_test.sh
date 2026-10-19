@@ -3,7 +3,8 @@
 # Checks the pinned SDK fetch script (now the shared mavericks-shipyard copy, path
 # passed as $1 from the ctest def). Verifies the pin + durable cache.
 set -eu
-SDK_SH="${1:?fetch_sdk.sh path required (arg 1)}"
+[ $# -ge 1 ] || { echo "fetch_sdk_test: runs from the ctest build, which passes its arguments -- skipping"; exit 77; }
+SDK_SH=$1
 [ -r "$SDK_SH" ] || { echo "fetch_sdk_test: script missing: $SDK_SH" >&2; exit 1; }
 PINS_SH="$(dirname "$SDK_SH")/sdk-pins.sh"
 [ -r "$PINS_SH" ] || { echo "fetch_sdk_test: sdk-pins.sh missing beside $SDK_SH" >&2; exit 1; }

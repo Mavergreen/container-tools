@@ -4,6 +4,7 @@
 # $1 = binary to check; $2 = path to the shared assert_binary_compatible.sh (from the ctest def).
 set -eu
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
+[ $# -ge 2 ] || { echo "compat_guard_test: runs from the ctest build, which passes its arguments -- skipping"; exit 77; }
 BIN="${1:-$ROOT/build/docker-cli/docker}"
 GUARD="${2:?assert_binary_compatible.sh path required (arg 2)}"
 [ -x "$BIN" ] || { echo "build docker-cli first (shipyard-cmake --build <dir>)" >&2; exit 1; }

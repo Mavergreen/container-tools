@@ -4,6 +4,7 @@
 # SDK stubs, or be on the weak allowlist.
 set -eu
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
+[ $# -ge 2 ] || { echo "sdk_coverage_test: runs from the ctest build, which passes its arguments -- skipping"; exit 77; }
 BIN="${1:-$ROOT/build/docker-cli/docker}"
 FETCH_SCRIPT="${2:?fetch_sdk.sh path required (arg 2)}"
 [ -x "$BIN" ] || { echo "build docker-cli first (shipyard-cmake --build <dir>)" >&2; exit 1; }

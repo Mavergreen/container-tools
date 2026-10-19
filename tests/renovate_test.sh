@@ -4,6 +4,8 @@
 # customManager for components/*/version.
 set -eu
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
+# platform: 10.9 ships no python3, so on a stock 10.9 box this cannot read the JSON at all
+command -v python3 >/dev/null 2>&1 || { echo "renovate_test: no python3 -- skipping"; exit 77; }
 python3 -c "import json,sys; json.load(open('$ROOT/.github/renovate.json'))" \
   || { echo "renovate.json invalid JSON" >&2; exit 1; }
 grep -q 'components/.*/version' "$ROOT/.github/renovate.json" \
