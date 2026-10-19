@@ -50,13 +50,8 @@ green CI as proof the iso boots.
 
 Every release is installed on a real 10.9.5 guest before it publishes: release.yml's `on-mavericks`
 job (`Mavergreen/mavericks-vm`) installs the pkg the way a user does, runs `tests/smoke-mavericks.sh`
-there, and runs the repo's tests under 10.9's own `/bin/sh` and tools. The guest cannot run two
-things, so they stay manual acceptance on a real Mac:
-
-- The Docker VM itself. VMware Fusion does not run nested in the QEMU guest, so nothing that needs the
-  daemon (`docked`, `docker run`) and no VM create, start or stop.
-- The menu bar app's and the updater's GUI. The guest has no screen; the smoke checks both are
-  installed, not that they draw.
+there, and runs the repo's tests under 10.9's own `/bin/sh` and tools. What the guest cannot run is
+declared below as `on-target:` deviations and stays manual acceptance on a real Mac.
 
 ## Upstream release notes
 
@@ -68,3 +63,5 @@ with its own pin; their changes are named in each release's generated "Build ing
 
 - scheme: Container Tools is its own upstream (its own code around bundled ingredients, no single release of someone else's to repackage), so it versions itself by date as YYYYMMDD.N with no -mavericks.N axis
 - unlinked:components/boot2docker/version:BASE: a Debian slim base-image refresh publishes no change notes
+- on-target:docker-vm: VMware Fusion does not run nested in the QEMU guest, so the Docker VM itself, and everything that needs its daemon (docked, docker run, VM create/start/stop), is accepted by hand on a real Mac
+- on-target:menubar-gui: the guest has no screen, so the menu bar app's and the updater's GUI are accepted by hand on a real Mac; the smoke checks only that both are installed
