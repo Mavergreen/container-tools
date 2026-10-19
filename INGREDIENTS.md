@@ -46,6 +46,18 @@ CI proves the build and the fetch/fingerprint gates; a modern runner cannot boot
 boot-proof auto-skips (`ctest` code 77). Real-10.9 boot testing is the acceptance bar — do not read a
 green CI as proof the iso boots.
 
+## Acceptance on real 10.9
+
+Every release is installed on a real 10.9.5 guest before it publishes: release.yml's `on-mavericks`
+job (`Mavergreen/mavericks-vm`) installs the pkg the way a user does, runs `tests/smoke-mavericks.sh`
+there, and runs the repo's tests under 10.9's own `/bin/sh` and tools. The guest cannot run two
+things, so they stay manual acceptance on a real Mac:
+
+- The Docker VM itself. VMware Fusion does not run nested in the QEMU guest, so nothing that needs the
+  daemon (`docked`, `docker run`) and no VM create, start or stop.
+- The menu bar app's and the updater's GUI. The guest has no screen; the smoke checks both are
+  installed, not that they draw.
+
 ## Upstream release notes
 
 No upstream release notes: there is no single upstream to link. The product bundles six components

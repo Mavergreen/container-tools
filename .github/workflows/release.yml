@@ -408,6 +408,47 @@ jobs:
             dist/RELEASE_NOTES.md
             dist/build-info-*.txt
 
+  # spec: tests/smoke-mavericks.sh -- acceptance on real 10.9: the pkg this run built, installed the way
+  #       a user installs it, on a real 10.9.5 guest (Mavergreen/mavericks-vm); every shipped executable
+  #       run there, and the repo's own tests run under 10.9's /bin/sh and tools. A skip (77) of the
+  #       smoke fails here: this job exists so that it runs. publish waits for it. It runs only when
+  #       this run publishes, because only a publishing run packages. INGREDIENTS.md "Acceptance on
+  #       real 10.9" names what the guest cannot run.
+  on-mavericks:
+    needs: [ver, package]
+    if: needs.ver.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: docker-pkg
+          path: dist
+      - name: Install mavericks-shipyard
+        uses: Mavergreen/shipyard/.github/actions/install@v1
+      # The guest gets the workspace, not this runner's shipyard checkout: copy the scripts in, so
+      # the repo's tests run there through the same shared runner as everywhere else.
+      - name: Bring shipyard's scripts into the workspace
+        run: cp -R "$SHIPYARD_SCRIPTS" .shipyard-scripts
+      - uses: Mavergreen/mavericks-vm@v1
+        env:
+          CT_VERSION: ${{ needs.ver.outputs.version }}
+        with:
+          image-key: ${{ secrets.MAVERICKS_VM_KEY }}
+          envs: CT_VERSION
+          copyback: false
+          debug-on-error: true
+          run: |
+            sw_vers
+            sudo -n true || { echo "the guest's user cannot sudo without a password, and installer needs root"; exit 1; }
+            sudo installer -pkg "dist/container-tools-$CT_VERSION.pkg" -target /
+            status=0; sh tests/smoke-mavericks.sh || status=$?
+            [ "$status" -eq 0 ] || { echo "smoke-mavericks.sh exited $status (77 is a skip, a failure here)"; exit 1; }
+            SHIPYARD_SCRIPTS="$PWD/.shipyard-scripts" sh .shipyard-scripts/run-repo-tests.sh
+
   # Before anything is published: no log of this run, and no file about to be released, carries a
   # piece of the signing key. shipyard's publish-release.yml looks for this job's record on any signed
   # release; it cannot run the scan itself (reading job logs needs actions: read).
@@ -429,7 +470,7 @@ jobs:
   # repackage needs since a GITHUB_TOKEN-pushed tag triggers nothing.
   publish:
     if: needs.ver.outputs.publish == 'true'
-    needs: [ver, build-macos, package, scan]
+    needs: [ver, build-macos, package, scan, on-mavericks]
     permissions:
       contents: write
     uses: Mavergreen/shipyard/.github/workflows/publish-release.yml@v1
