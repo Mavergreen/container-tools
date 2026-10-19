@@ -157,6 +157,41 @@ case_user_stopped_previous_boot() {
 case_user_stopped_stays_stopped
 case_user_stopped_previous_boot
 
+# The login agent's tick keeps the menu's disk numbers fresh, and says once a day when the VM's
+# disk is nearly full -- the 2026-09-24 crash-loop gave no sign at all from the Mac.
+stub_running_vm_df() { # $1 = df's data line
+  cat > "$BIN/docker-machine" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >> "$DM_LOG"
+case "\$1" in
+  status) echo Running ;;
+  ssh)    echo 'Filesystem 1024-blocks Used Available Capacity Mounted on'; echo "$1" ;;
+  env)    echo 'export DOCKER_HOST="tcp://192.168.237.131:2376"'
+          echo "export DOCKER_CERT_PATH=\"$HOME/x\"" ;;
+esac
+EOF
+  chmod +x "$BIN/docker-machine"
+}
+case_tick_refreshes_disk() {
+  setup; make_docker; stub_running_vm_df '/dev/sda1 18668944 12460804 5219012 70% /mnt/sda1'
+  sh "$BOOT" || fail "tick should exit 0"
+  [ "$(cat "$MAVERICKS_DOCKER_STATE_DIR/disk")" = "18668944 12460804 5219012 ok" ] || fail "a running tick must refresh the disk cache"
+  grep -q 'almost full' "$OSA_LOG" && fail "a 70% disk must not notify"
+  teardown
+}
+case_tick_warns_low_disk() {
+  setup; make_docker; stub_running_vm_df '/dev/sda1 18668944 16000000 1700000 91% /mnt/sda1'
+  sh "$BOOT" || fail "tick should exit 0"
+  grep -q 'almost full' "$OSA_LOG" || fail "a low disk must notify"
+  : > "$OSA_LOG"
+  sh "$BOOT" || fail "second tick should exit 0"
+  grep -q 'almost full' "$OSA_LOG" && fail "the low-disk notification must be throttled to once a day"
+  teardown
+}
+
+case_tick_refreshes_disk
+case_tick_warns_low_disk
+
 # --- Case: running -> create context from docker-machine env, then use it ---
 case_context_create() {
   setup; make_dm; make_docker

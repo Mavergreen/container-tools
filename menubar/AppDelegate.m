@@ -9,6 +9,7 @@
 @property (strong) MDWatchers *watchers;
 @property (assign) BOOL vmLoginOn;   // cached "Start Docker at login" state
 @property (assign) BOOL imageStale;  // cached: VM is on an older boot2docker.iso than installed
+@property (assign) BOOL diskLow;     // the running VM's disk is 90%+ used (from the disk cache)
 @end
 
 @implementation AppDelegate
@@ -33,6 +34,7 @@
 - (void)refresh {
   NSString *state = [self.controller currentState];
   if ([state isEqualToString:@"no-fusion"]) [self maybePromptForFusion];
+  self.diskLow = [state isEqualToString:@"running"] && [[self.controller diskStatus] hasSuffix:@" low"];
   NSImage *icon = [self iconForState:state];
   icon.template = YES;
   [self.statusItem setImage:icon];
@@ -64,6 +66,7 @@
     if ([op isEqualToString:@"start"])         return @"Starting Docker…";
     if ([op isEqualToString:@"stop"])          return @"Stopping Docker…";
     if ([op isEqualToString:@"restart"])       return @"Restarting Docker…";
+    if ([op isEqualToString:@"free-space"])    return @"Freeing up space…";
     return @"Working…";
   }
   if ([s isEqualToString:@"running"])   return @"Docker: Running";
@@ -79,6 +82,10 @@
 
   NSMenuItem *header = [m addItemWithTitle:[self humanState:state] action:NULL keyEquivalent:@""];
   header.enabled = NO;
+  if ([state isEqualToString:@"running"] || [state isEqualToString:@"stopped"]) {
+    NSMenuItem *disk = [m addItemWithTitle:[self diskLineForState:state] action:NULL keyEquivalent:@""];
+    disk.enabled = NO;
+  }
   [m addItem:[NSMenuItem separatorItem]];
 
   if ([state isEqualToString:@"no-fusion"]) {
@@ -89,6 +96,7 @@
     if ([state isEqualToString:@"running"]) {
       [m addItemWithTitle:@"Stop Docker" action:@selector(doStop:) keyEquivalent:@""];
       [m addItemWithTitle:@"Restart Docker" action:@selector(doRestart:) keyEquivalent:@""];
+      [m addItemWithTitle:@"Free Up Space…" action:@selector(doFreeSpace:) keyEquivalent:@""];
     } else {
       [m addItemWithTitle:@"Start Docker" action:@selector(doStart:) keyEquivalent:@""];
     }
@@ -145,6 +153,11 @@
     else    [self notifyTitle:@"Container Tools" text:@"VM image update failed — see Show Log."];
     return;
   }
+  if ([verb isEqualToString:@"free-space"]) {
+    if (ok) [self notifyTitle:@"Container Tools" text:[self diskLineForState:@"running"]];
+    else    [self notifyTitle:@"Container Tools" text:@"Freeing up space failed — see Show Log."];
+    return;
+  }
   if (ok) return;   // start/stop/restart: silent on success
   if ([verb isEqualToString:@"start"])   [self notifyTitle:@"Container Tools" text:@"Starting Docker failed — see Show Log."];
   if ([verb isEqualToString:@"stop"])    [self notifyTitle:@"Container Tools" text:@"Stopping Docker failed — see Show Log."];
@@ -155,6 +168,36 @@
 - (void)doRestart:(id)s { [self runAndRefresh:@"restart"]; }
 - (void)doSetup:(id)s   { [self runAndRefresh:@"setup"]; }
 - (void)doImageUpgrade:(id)s { [self runAndRefresh:@"image-upgrade"]; }
+
+// "Disk: 5.2 GB free of 19.1 GB", from the cache the login agent's tick keeps (ctl disk-status).
+- (NSString *)diskLineForState:(NSString *)state {
+  if (![state isEqualToString:@"running"]) return @"Disk: unknown (Docker stopped)";
+  NSArray *f = [[self.controller diskStatus] componentsSeparatedByString:@" "];
+  if (f.count != 4) return @"Disk: unknown";
+  NSString *free = [NSByteCountFormatter stringFromByteCount:[f[2] longLongValue] * 1024
+                                                  countStyle:NSByteCountFormatterCountStyleFile];
+  NSString *total = [NSByteCountFormatter stringFromByteCount:[f[0] longLongValue] * 1024
+                                                   countStyle:NSByteCountFormatterCountStyleFile];
+  if ([f[3] isEqualToString:@"low"]) return [NSString stringWithFormat:@"Disk almost full: %@ free", free];
+  return [NSString stringWithFormat:@"Disk: %@ free of %@", free, total];
+}
+
+// Like Docker Desktop's "Clean up": confirm with what docker says can be freed, then remove unused
+// images and build cache only. Containers and volumes can hold the user's data, so never those.
+- (void)doFreeSpace:(id)s {
+  [self.controller runVerb:@"reclaimable" completion:^(NSString *out, int code) {
+    NSAlert *a = [[NSAlert alloc] init];
+    a.messageText = @"Free up space on the Docker VM?";
+    NSString *what = (code == 0 && out.length) ? out : @"(Docker could not say how much.)";
+    a.informativeText = [NSString stringWithFormat:
+      @"This removes unused images and build cache:\n\n%@\n\nImages download again when something "
+       "next needs them. Containers and volumes are not touched.", what];
+    [a addButtonWithTitle:@"Free Up Space"];   // first = default
+    [a addButtonWithTitle:@"Cancel"];
+    [NSApp activateIgnoringOtherApps:YES];      // a menu-bar extra's alert must come to the front
+    if ([a runModal] == NSAlertFirstButtonReturn) [self runAndRefresh:@"free-space"];
+  }];
+}
 
 - (void)doGetFusion:(id)s {
   [self notifyTitle:@"Container Tools" text:@"Opening the VMware Fusion download (467 MB) in your browser…"];
@@ -212,7 +255,8 @@
   BOOL working   = [state hasPrefix:@"working"] || [state isEqualToString:@"creating"];
   BOOL attention = [state isEqualToString:@"no-fusion"] ||
                    [state isEqualToString:@"absent"]    ||
-                   [state isEqualToString:@"error"];
+                   [state isEqualToString:@"error"]     ||
+                   (running && self.diskLow);
 
   NSImage *img = [NSImage imageWithSize:NSMakeSize(18, 18) flipped:NO
       drawingHandler:^BOOL(NSRect r) {
@@ -254,7 +298,7 @@
       for (int i = 0; i < 3; i++)
         [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(5.0 + i * 3.0, 14.6, 1.6, 1.6)] fill];
     } else if (attention) {
-      // Filled badge, lower-right = needs attention (no Fusion / absent / error).
+      // Filled badge, lower-right = needs attention (no Fusion / absent / error / disk almost full).
       [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(12.6, 1.8, 4.2, 4.2)] fill];
     }
     return YES;

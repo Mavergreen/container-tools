@@ -38,8 +38,23 @@ case "${1:-}" in
   login-status) launchctl list "$AGENT_LABEL" >/dev/null 2>&1 && echo on || echo off ;;
   login-on)  launchctl load -w "$AGENT_PLIST" >>"$LOG" 2>&1 ;;
   login-off) launchctl unload -w "$AGENT_PLIST" >>"$LOG" 2>&1 ;;
+  disk-status) disk_refresh ;;
+  # What "Free Up Space…" would free, and the cleanup itself: unused images and build cache only.
+  # Never containers or volumes -- a stopped container or a volume can hold the user's data.
+  reclaimable)
+    docker --context "$CONTEXT" system df --format '{{.Type}}|{{.Size}}|{{.Reclaimable}}' 2>/dev/null | awk -F'|' '
+      $1 == "Images"      { sub(/ .*/, "", $3); print "Unused images: " $3 }
+      $1 == "Build Cache" { sub(/ .*/, "", $3); print "Build cache: " $3 }' ;;
+  free-space)
+    op_begin free-space
+    _rc=0
+    docker --context "$CONTEXT" image prune -a -f >>"$LOG" 2>&1 || _rc=$?
+    docker --context "$CONTEXT" builder prune -f >>"$LOG" 2>&1 || _rc=$?
+    disk_refresh >/dev/null
+    op_end
+    exit $_rc ;;
   setup)   clear_user_stopped; exec docker-machine-bootstrap ;;
   migrate) exec docker-machine-migrate ;;
   vmx-pid) pgrep -f "machines/$MACHINE/.*\.vmx" 2>/dev/null | head -1 || true ;;
-  *) echo "usage: docker-machine-ctl {status|start|stop|restart|image-status|image-upgrade|login-status|login-on|login-off|setup|migrate|vmx-pid}" >&2; exit 2 ;;
+  *) echo "usage: docker-machine-ctl {status|start|stop|restart|image-status|image-upgrade|disk-status|reclaimable|free-space|login-status|login-on|login-off|setup|migrate|vmx-pid}" >&2; exit 2 ;;
 esac

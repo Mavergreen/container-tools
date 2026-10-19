@@ -73,4 +73,18 @@ grep -q 'MDFusionPromptSeeded' "$AD" || fail "must guard the one-time Fusion ale
 grep -q 'NSAlert' "$AD" || fail "must show an NSAlert when Fusion is absent"
 grep -q '@"Get VMware Fusion' "$AD" || fail "menu/alert must offer 'Get VMware Fusion'"
 
+# The VM's disk: a line in the menu read from the cache the login agent's tick keeps (the `disk` file
+# beside `state`, so opening the menu never waits on the VM), the attention badge when it is low, and
+# a "Free Up Space…" action that confirms with `reclaimable` and then runs `free-space`. The disk
+# filled silently once (2026-09-24); these are what make that visible and fixable from the menu.
+MC="$ROOT/menubar/MDController.m"
+grep -q 'stringByAppendingPathComponent:@"disk"' "$MC" || fail "MDController must read the disk cache file beside the state file"
+grep -q '@"Disk: ' "$AD" || fail "the menu must show a 'Disk: …' line"
+grep -q '@"Disk almost full: ' "$AD" || fail "a low disk must read 'Disk almost full: …'"
+grep -q 'diskLow' "$AD" || fail "a low disk must raise the icon's attention badge"
+grep -q '@"Free Up Space…"' "$AD" || fail "the menu must offer 'Free Up Space…'"
+grep -q 'runVerb:@"reclaimable"' "$AD" || fail "Free Up Space must confirm with what the reclaimable verb reports"
+grep -q 'runAndRefresh:@"free-space"' "$AD" || fail "Free Up Space must drive the free-space verb"
+grep -q 'not touched' "$AD" || fail "the Free Up Space confirmation must say containers and volumes are not touched"
+
 echo "docker_menubar_test: OK"

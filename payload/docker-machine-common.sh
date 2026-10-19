@@ -24,6 +24,7 @@ STATE_FILE="$STATE_DIR/state"
 LOCK="$STATE_DIR/creating.lock"
 OP_LOCK="$STATE_DIR/op.lock"   # generic in-progress marker for the ctl verbs (start/stop/restart/image-upgrade)
 USER_STOPPED="$STATE_DIR/user-stopped"   # the menu's Stop, for this boot: the login agent leaves the VM down
+DISK_FILE="$STATE_DIR/disk"              # the VM disk line the menu shows (see disk_refresh)
 PROFILES=${MAVERICKS_DOCKER_PROFILES:-$HOME/.bash_profile $HOME/.profile $HOME/.zshrc $HOME/.bashrc}
 AGENT_LABEL=dev.mavergreen.container-tools-machine
 AGENT_PLIST=/Library/LaunchAgents/$AGENT_LABEL.plist
@@ -121,6 +122,24 @@ status_word() {
     "")      echo absent ;;
     *)       echo error ;;
   esac
+}
+
+# The VM's disk, for the menu: "<total KB> <used KB> <avail KB> ok|low", or "unknown" when the VM is
+# not running or df can't be read. Docker's data lives on /mnt/sda1. "low" is 90% used, counted the
+# way df's Capacity is (used / (used + avail)). The disk filled silently once (2026-09-24: Linux
+# 1Password's container crash-looped with ENOSPC and nothing on the Mac said why). Cached in
+# DISK_FILE, atomically, so opening the menu never waits on the VM; prints what it wrote.
+disk_refresh() {
+  _d=unknown
+  if [ "$(machine_status)" = Running ]; then
+    _d=$(docker-machine ssh "$MACHINE" df -P /mnt/sda1 2>/dev/null | awk '
+      NR == 2 && $2 ~ /^[0-9]+$/ && $3 ~ /^[0-9]+$/ && $4 ~ /^[0-9]+$/ && $3 + $4 > 0 {
+        printf "%s %s %s %s\n", $2, $3, $4, ($3 * 100 >= 90 * ($3 + $4)) ? "low" : "ok" }')
+    [ -n "$_d" ] || _d=unknown
+  fi
+  mkdir -p "$STATE_DIR" 2>/dev/null || true
+  printf '%s\n' "$_d" > "$DISK_FILE.tmp" 2>/dev/null && mv -f "$DISK_FILE.tmp" "$DISK_FILE" 2>/dev/null || true
+  printf '%s\n' "$_d"
 }
 
 write_state() {

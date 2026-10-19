@@ -19,6 +19,14 @@ static NSString * const kCtl = @"/usr/local/mavergreen/container-tools/bin/docke
   return [self runVerbSync:@"status" out:NULL];
 }
 
+- (NSString *)diskStatus {
+  NSString *path = [[self.stateFilePath stringByDeletingLastPathComponent]
+                    stringByAppendingPathComponent:@"disk"];
+  NSString *s = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:NULL];
+  s = [s stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+  return s.length ? s : @"unknown";
+}
+
 - (NSString *)runVerbSync:(NSString *)verb out:(int *)codeOut {
   NSTask *t = [[NSTask alloc] init];
   t.launchPath = kCtl;

@@ -115,6 +115,11 @@ main() {
   fi
   [ "$_status" = "Running" ] || docker-machine start "$MACHINE" >>"$LOG" 2>&1 || true
   [ "$(machine_status)" = "Running" ] && sync_context
+  case "$(disk_refresh)" in
+    *" low")
+      notify disklow "Container Tools for Mavericks" \
+        "The Docker VM's disk is almost full. Choose Free Up Space… in the Container Tools menu." ;;
+  esac
   neutralize_env_override
   write_state "$(status_word)"
   exit 0

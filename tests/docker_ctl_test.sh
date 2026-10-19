@@ -58,6 +58,80 @@ case_start_stop() {
 # The menu's Stop records that the user wants the VM down (for this boot), so the login agent's
 # 60s tick leaves it alone; anything that brings the VM up again clears that.
 UMARK() { echo "$MAVERICKS_DOCKER_STATE_DIR/user-stopped"; }
+
+# The VM's disk, for the menu: "<total KB> <used KB> <avail KB> ok|low", or "unknown". Read from df
+# inside the VM (docker's data lives on /mnt/sda1), "low" at 90% used the way df counts Capacity
+# (used / (used + avail)), and cached in $STATE_DIR/disk so opening the menu never waits on the VM.
+stub_dm_df() { # $1 = status word, $2 = df's data line (empty: ssh fails)
+  cat > "$BIN/docker-machine" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >> "$DM_LOG"
+case "\$1" in
+  status) echo "$1"; exit 0 ;;
+  ssh) [ -n "$2" ] || exit 1
+       echo 'Filesystem           1024-blocks    Used Available Capacity Mounted on'
+       echo "$2" ;;
+esac
+exit 0
+EOF
+  chmod +x "$BIN/docker-machine"
+}
+DISKF() { echo "$MAVERICKS_DOCKER_STATE_DIR/disk"; }
+case_disk_status_ok() {
+  setup; stub_dm_df Running '/dev/sda1             18668944  12460804   5219012  70% /mnt/sda1'
+  [ "$(sh "$CTL" disk-status)" = "18668944 12460804 5219012 ok" ] || fail "disk-status should report total/used/avail KB and ok at 70%"
+  [ "$(cat "$(DISKF)")" = "18668944 12460804 5219012 ok" ] || fail "disk-status must cache its answer for the menu"
+  grep -q '^ssh container-tools df -P /mnt/sda1' "$DM_LOG" || fail "disk-status must read df of /mnt/sda1 inside the VM"
+  teardown
+}
+case_disk_status_low() {
+  setup; stub_dm_df Running '/dev/sda1             18668944  16000000   1700000  91% /mnt/sda1'
+  [ "$(sh "$CTL" disk-status)" = "18668944 16000000 1700000 low" ] || fail "disk-status should say low at 90% or more used"
+  teardown
+}
+case_disk_status_unknown() {
+  setup; stub_dm_df Stopped '/dev/sda1 1 1 1 1% /mnt/sda1'
+  [ "$(sh "$CTL" disk-status)" = unknown ] || fail "a stopped VM's disk is unknown"
+  grep -q '^ssh' "$DM_LOG" && fail "disk-status must not ssh into a VM that is not running"
+  teardown
+  setup; stub_dm_df Running ''
+  [ "$(sh "$CTL" disk-status)" = unknown ] || fail "a failed df is unknown, not a number"
+  [ "$(cat "$(DISKF)")" = unknown ] || fail "an unknown disk must replace a stale cached number"
+  teardown
+}
+
+# "Free Up Space…": the confirmation shows what docker says can be freed, and the cleanup removes only
+# unused images and build cache -- never containers or volumes, which can hold the user's data.
+stub_docker_df() {
+  cat > "$BIN/docker" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >> "$DOCKER_LOG"
+case "\$*" in
+  *"system df"*) printf 'Images|9.832GB|2.804GB (28%%)\nContainers|200.5MB|194MB (96%%)\nLocal Volumes|1.876GB|396B (0%%)\nBuild Cache|1.2GB|0.8GB\n' ;;
+esac
+exit 0
+EOF
+  chmod +x "$BIN/docker"
+}
+case_reclaimable() {
+  setup; stub_dm_df Running '/dev/sda1 18668944 12460804 5219012 70% /mnt/sda1'; stub_docker_df
+  out=$(sh "$CTL" reclaimable) || fail "reclaimable exit 0"
+  [ "$out" = "$(printf 'Unused images: 2.804GB\nBuild cache: 0.8GB')" ] \
+    || fail "reclaimable should list only what free-space removes (got: $out)"
+  grep -q -- '--context mavericks system df' "$DOCKER_LOG" || fail "reclaimable must ask the mavericks context"
+  teardown
+}
+case_free_space() {
+  setup; stub_dm_df Running '/dev/sda1 18668944 12460804 5219012 70% /mnt/sda1'; stub_docker_df
+  sh "$CTL" free-space >/dev/null || fail "free-space exit 0"
+  grep -q -- '--context mavericks image prune -a -f' "$DOCKER_LOG" || fail "free-space must remove unused images"
+  grep -q -- '--context mavericks builder prune -f' "$DOCKER_LOG" || fail "free-space must remove build cache"
+  if grep -E -e 'volume' -e 'container prune' -e 'system prune' "$DOCKER_LOG"; then
+    fail "free-space must never remove containers or volumes"
+  fi
+  [ "$(cat "$(DISKF)")" = "18668944 12460804 5219012 ok" ] || fail "free-space must refresh the cached disk numbers"
+  teardown
+}
 case_stop_marks_user_stopped() {
   setup; stub_dm Stopped
   MAVERICKS_DOCKER_BOOT_ID=boot-A sh "$CTL" stop >/dev/null || fail "stop exit 0"
@@ -270,6 +344,11 @@ case_start_stop
 case_stop_marks_user_stopped
 case_failed_stop_marks_nothing
 case_up_verbs_clear_user_stopped
+case_disk_status_ok
+case_disk_status_low
+case_disk_status_unknown
+case_reclaimable
+case_free_space
 case_image
 case_image_upgrade_fails
 case_start_announces
