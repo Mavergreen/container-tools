@@ -12,7 +12,7 @@ function(container_tools_version out root)
   string(STRIP "${_ver}" _ver)
   # platform: CMake's regex has no {n} repetition, so the eight date digits are spelled out
   if(NOT _ver MATCHES "^[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9](\\.[0-9]+)?$")
-    message(FATAL_ERROR "container-tools: version '${_ver}' (from ${root}/VERSION or UPSTREAM_VERSION) is not YYYYMMDD[.N]")
+    message(FATAL_ERROR "container-tools: version '${_ver}' (from ${root}/VERSION or UPSTREAM_VERSION) is not YYYYMMDD[.N]; a VERSION left by an older build is a gitignored build product, so delete it")
   endif()
   set(${out} "${_ver}" PARENT_SCOPE)
 endfunction()
