@@ -1,12 +1,12 @@
 #!/bin/sh
-# platform: macOS-only -- `open` reveals the download in Finder and mounts the .dmg
+# platform: macOS-only -- `open` hands the .dmg URL to the default browser
 # container-tools-get-fusion — find the first VMware Fusion .dmg on the Macintosh Garden page and
-# download it. AquaProxy handles TLS on the old-OS hosts, so plain curl (no CA logic). On ANY
-# failure, open the page in a browser so the user is never stuck. Env: GET_FUSION_PAGE_URL,
-# GET_FUSION_DEST (override for tests).
+# hand its URL to the default browser, which downloads it with its own progress, pause and resume
+# (Safari mounts a .dmg when it finishes). AquaProxy handles TLS on the old-OS hosts, so plain curl
+# fetches the page (no CA logic). On ANY failure, open the page in a browser so the user is never
+# stuck. Env: GET_FUSION_PAGE_URL (override for tests).
 set -u
 PAGE="${GET_FUSION_PAGE_URL:-https://macintoshgarden.org/apps/vmware-fusion-8-yosemite-el-capitan}"
-DEST="${GET_FUSION_DEST:-$HOME/Downloads}"
 
 open_page() { open "$PAGE" >/dev/null 2>&1 || true; }
 
@@ -28,14 +28,10 @@ pick=$(printf '%s\n' "$mirrors" | grep -E '://(old\.mac\.gdn|gardenmirror\.oldap
 [ -n "$pick" ] || pick=$(printf '%s\n' "$mirrors" | grep -v '?' | head -1)
 [ -n "$pick" ] || pick=$(printf '%s\n' "$mirrors" | head -1)
 
-mkdir -p "$DEST" || { echo "get-fusion: cannot create $DEST" >&2; open_page; exit 1; }
-out="$DEST/$first_file"
-if curl -fL --progress-bar -o "$out" "$pick"; then
-  open -R "$out" >/dev/null 2>&1 || true   # reveal in Finder
-  open "$out"    >/dev/null 2>&1 || true    # mount the dmg
-  echo "get-fusion: downloaded $out"
+if open "$pick" >/dev/null 2>&1; then
+  echo "get-fusion: opened $pick in the default browser"
   exit 0
 fi
-echo "get-fusion: download failed ($pick)" >&2
+echo "get-fusion: could not open $pick" >&2
 open_page
 exit 1

@@ -157,7 +157,7 @@
 - (void)doImageUpgrade:(id)s { [self runAndRefresh:@"image-upgrade"]; }
 
 - (void)doGetFusion:(id)s {
-  [self notifyTitle:@"Container Tools" text:@"Downloading VMware Fusion (467 MB)…"];
+  [self notifyTitle:@"Container Tools" text:@"Opening the VMware Fusion download (467 MB) in your browser…"];
   NSTask *t = [[NSTask alloc] init];
   t.launchPath = @"/usr/local/mavergreen/container-tools/bin/container-tools-get-fusion";
   @try { [t launch]; }
