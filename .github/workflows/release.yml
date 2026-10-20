@@ -61,6 +61,7 @@ jobs:
     outputs:
       version: ${{ steps.ver.outputs.version }}
       publish: ${{ steps.ver.outputs.publish }}
+      package: ${{ steps.ver.outputs.package }}
     steps:
       - uses: actions/checkout@v7
         with: { fetch-depth: 0, persist-credentials: false }
@@ -85,8 +86,12 @@ jobs:
           if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ "$LOCAL_RELEASE" = true ]; then
             publish=true
           fi
-          { echo "version=$ver"; echo "publish=$publish"; } >> "$GITHUB_OUTPUT"
-          echo "version=$ver publish=$publish"
+          # A pull request packages too, unsigned, so on-mavericks proves a Renovate bump on 10.9
+          # before it merges, not only at release time.
+          package=$publish
+          [ "$GITHUB_EVENT_NAME" = pull_request ] && package=true
+          { echo "version=$ver"; echo "publish=$publish"; echo "package=$package"; } >> "$GITHUB_OUTPUT"
+          echo "version=$ver publish=$publish package=$package"
 
   # platform: build-macos is main's required check, and GitHub counts a SKIPPED required check as
   #           passing, so build-macos runs even when ver fails, and then fails first.
@@ -190,10 +195,10 @@ jobs:
       - name: The build must not have written into the source tree
         run: sh "$SHIPYARD_SCRIPTS/assert-tree-clean.sh"
 
-      # On tags: bundle the packaging inputs into ONE tarball so executable bits (binaries, the .app's
+      # When packaging: bundle the packaging inputs into ONE tarball so executable bits (binaries, the .app's
       # Mach-Os, the signer) survive the artifact round-trip -- artifacts otherwise drop file modes.
       - name: Stage + upload packaging inputs
-        if: needs.ver.outputs.publish == 'true'
+        if: needs.ver.outputs.package == 'true'
         run: |
           export COPYFILE_DISABLE=1
           CROSS="$CROSS_BUILD_DIR"
@@ -217,8 +222,8 @@ jobs:
             lazydocker="$(sed -n 's/^REF=//p' components/lazydocker/version)" \
             lazydocker_digest="$(sed -n 's/^DIGEST=//p' components/lazydocker/version)" \
             golang_toolchain="$(cat components/golang/version)"
-      - name: Upload packaging inputs (publishing runs only)
-        if: needs.ver.outputs.publish == 'true'
+      - name: Upload packaging inputs (packaging runs only)
+        if: needs.ver.outputs.package == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: packaging-inputs
@@ -233,7 +238,7 @@ jobs:
   # publishes, and needs only ver (not build-macos), so it keeps running in parallel with build-macos.
   build-iso:
     needs: ver
-    if: needs.ver.outputs.publish == 'true'
+    if: needs.ver.outputs.package == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -295,10 +300,10 @@ jobs:
           name: boot2docker-iso
           path: ${{ env.ISO_BUILD_DIR }}/boot2docker/*
 
-  # Assemble + sign the product .pkg and render the signed appcast. Needs the mac binaries/updater and
-  # the iso; runs on macos-26 for pkgbuild/productbuild.
+  # Assemble the product .pkg (signed, with its appcast, when publishing; unsigned on a pull request).
+  # Needs the mac binaries/updater and the iso; runs on macos-26 for pkgbuild/productbuild.
   package:
-    if: needs.ver.outputs.publish == 'true'
+    if: needs.ver.outputs.package == 'true'
     needs: [ver, build-macos, build-iso]
     runs-on: macos-26
     steps:
@@ -346,14 +351,10 @@ jobs:
             --out dist/RELEASE_NOTES.md   # becomes the Release body; not attached as an asset
           echo "=== dist/RELEASE_NOTES.md ==="; cat dist/RELEASE_NOTES.md
 
-      - name: Assemble + sign the .pkg, render the appcast
+      - name: Assemble the .pkg
         env:
-          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
-          GH_TOKEN: ${{ github.token }}   # sign_and_appcast.sh fetches ed25519-sign via `gh` -> needs auth (else 403 rate-limit)
           VER: ${{ needs.ver.outputs.version }}
         run: |
-          # printenv, not [ -n "$SPARKLE_PRIVATE_KEY" ]: the shell never expands the key, so no trace can print it
-          printenv SPARKLE_PRIVATE_KEY | grep -q . || { echo "::error::SPARKLE_PRIVATE_KEY secret not set"; exit 1; }
           [ -d "$SHIPYARD_SCRIPTS" ] || { echo "::error::SHIPYARD_SCRIPTS not set by install@v1"; exit 1; }
           mkdir -p in dist
           tar -C in -xzf dl/packaging-inputs.tgz      # restores executable bits
@@ -373,9 +374,19 @@ jobs:
             --launch-agent payload/dev.mavergreen.container-tools-machine.plist \
             --resources cmake/resources --welcome Welcome.html
 
-          # Sign the .pkg + render the signed appcast; sign_and_appcast.sh auto-fetches the prebuilt
-          # ed25519-sign. The enclosure points at the versioned release asset; the client feed is
-          # /latest/ resolves to this full release immediately, so Sparkle clients pick it up right away.
+      # Sign the .pkg + render the signed appcast, only when publishing; sign_and_appcast.sh auto-fetches
+      # the prebuilt ed25519-sign. The enclosure points at the versioned release asset; the client feed
+      # is /latest/ resolves to this full release immediately, so Sparkle clients pick it up right away.
+      - name: Sign the .pkg, render the appcast (publishing runs only)
+        if: needs.ver.outputs.publish == 'true'
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          GH_TOKEN: ${{ github.token }}   # sign_and_appcast.sh fetches ed25519-sign via `gh` -> needs auth (else 403 rate-limit)
+          VER: ${{ needs.ver.outputs.version }}
+        run: |
+          # printenv, not [ -n "$SPARKLE_PRIVATE_KEY" ]: the shell never expands the key, so no trace can print it
+          printenv SPARKLE_PRIVATE_KEY | grep -q . || { echo "::error::SPARKLE_PRIVATE_KEY secret not set"; exit 1; }
+          PKG="dist/container-tools-$VER.pkg"
           URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/$VER/$(basename "$PKG")"
           sh "$SHIPYARD_SCRIPTS/sign_and_appcast.sh" \
             --product container-tools --feed-dir dist \
@@ -383,10 +394,17 @@ jobs:
             --version "$VER" --pkg-url "$URL" --min-os 10.9.5 \
             --notes-file dist/RELEASE_NOTES.md --pkg "$PKG"
           echo "=== container-tools.xml ==="; cat dist/container-tools.xml
+      # A pull request signs nothing (no key, and nothing it builds is published): an unsigned stand-in
+      # feed lets conformance check the same dist shape a release has.
+      - name: Stand-in appcast (unsigned; pull requests only)
+        if: needs.ver.outputs.publish != 'true'
+        env:
+          VER: ${{ needs.ver.outputs.version }}
+        run: sh "$SHIPYARD_SCRIPTS/stand-in-feeds.sh" dist "$VER"
       # No SHA256SUMS here: publish-release.yml regenerates it over everything it attaches, so the
       # checksums cover the appcast too and no repo hand-rolls that step.
       # Conformance: the .pkg, the appcast and the version we are about to publish must agree with each
-      # other and with the family's schemes. This job only runs when publishing, so no extra gate.
+      # other and with the family's schemes, on a pull request's unsigned dist as on a release's.
       - name: Artifact conformance
         env:
           VER: ${{ needs.ver.outputs.version }}
@@ -411,12 +429,13 @@ jobs:
   # spec: tests/smoke-mavericks.sh -- acceptance on real 10.9: the pkg this run built, installed the way
   #       a user installs it, on a real 10.9.5 guest (Mavergreen/mavericks-vm); every shipped executable
   #       run there, and the repo's own tests run under 10.9's /bin/sh and tools. A skip (77) of the
-  #       smoke fails here: this job exists so that it runs. publish waits for it. It runs only when
-  #       this run publishes, because only a publishing run packages. INGREDIENTS.md "Acceptance on
-  #       real 10.9" names what the guest cannot run.
+  #       smoke fails here: this job exists so that it runs. publish waits for it. It runs on every
+  #       run that packages -- a release, and every pull request, so a Renovate bump is proven on 10.9
+  #       before it merges. A fork's pull request has no MAVERICKS_VM_KEY, so cannot boot the guest:
+  #       it skips this. INGREDIENTS.md's on-target deviations name what the guest cannot run.
   on-mavericks:
     needs: [ver, package]
-    if: needs.ver.outputs.publish == 'true'
+    if: needs.ver.outputs.package == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     permissions:
       contents: read
