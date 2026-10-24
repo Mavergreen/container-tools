@@ -329,6 +329,25 @@ EOF
   teardown
 }
 
+# The verbs that power the VM on refuse when the Mac has no room for its .vmem (see host_room_to_boot)
+# -- the power-on inside `docker-machine upgrade` is the one that paused the VM on 2026-10-24. A
+# refused image-upgrade leaves a running VM running rather than stopping it into a pause.
+case_no_room_to_boot() {
+  setup; stub_dm Running
+  export MAVERICKS_DOCKER_MACHDIR="$WORK/machines"; mkdir -p "$MAVERICKS_DOCKER_MACHDIR/container-tools"
+  printf 'memsize = "16384"\n' > "$MAVERICKS_DOCKER_MACHDIR/container-tools/container-tools.vmx"
+  printf '{ "Boot2DockerURL": "/x" }\n' > "$MAVERICKS_DOCKER_MACHDIR/container-tools/config.json"
+  printf '#!/bin/sh\necho "Filesystem 1024-blocks Used Available Capacity Mounted on"\necho "/dev/x 1 1 3000000 99%% /"\n' \
+    > "$BIN/df"; chmod +x "$BIN/df"
+  sh "$CTL" start >/dev/null && fail "start must fail when there is no room to power on"
+  grep -q '^start ' "$DM_LOG" && fail "start must not call docker-machine start without room"
+  sh "$CTL" image-upgrade >/dev/null && fail "image-upgrade must fail when there is no room to power on"
+  grep -q '^stop \|^upgrade ' "$DM_LOG" && fail "image-upgrade must not stop or upgrade without room"
+  grep -q 'GB free' "$MAVERICKS_DOCKER_LOG" || fail "the refusal must say in the log how much space is needed"
+  [ -d "$MAVERICKS_DOCKER_STATE_DIR/op.lock" ] && fail "a refused verb must release op.lock"
+  teardown
+}
+
 # A ctl verb announces working:<op> while it runs; verified here via op_end's cleanup (lock gone,
 # state settled). The mid-run working marker itself is exercised in docker_common_test.
 case_start_announces() {
@@ -352,6 +371,7 @@ case_free_space
 case_image
 case_image_upgrade_fails
 case_start_announces
+case_no_room_to_boot
 case_start_syncs_context
 case_status_stays_fast
 case_login

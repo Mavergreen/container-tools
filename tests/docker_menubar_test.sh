@@ -23,6 +23,10 @@ if grep -qi 'docker mark' "$AD"; then fail "menu-bar glyph must not imitate the 
 grep -qi 'container' "$AD" || fail "menu-bar glyph must draw a container"
 grep -q 'template = YES' "$AD" || fail "menu-bar glyph must be a template image"
 grep -q '"no-fusion"' "$AD" || fail "glyph must distinguish needs-attention states (no-fusion/absent/error)"
+# VMware pauses the VM when the Mac's disk fills (ctl's host-disk-full): the menu must say so and
+# flag attention, not offer Start Docker for a VM that is paused, not stopped.
+[ "$(grep -c '"host-disk-full"' "$AD")" -ge 3 ] \
+  || fail "menu must title, flag and special-case the host-disk-full state"
 
 # On-demand "Check for Updates" hands off to the bundled Sparkle updater with --user
 # (interactive check) — the same executable the daily LaunchAgent runs with --background.

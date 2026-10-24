@@ -15,9 +15,16 @@ _run_and_announce() { # docker-machine subcommand
   return $_rc
 }
 
+_refuse_without_room() { # verb  -- end the op and fail if the Mac can't fit the VM's power-on
+  host_room_to_boot && return 0
+  log "$1 refused: $ROOM_MSG"
+  op_end
+  exit 1
+}
+
 case "${1:-}" in
   status)  _w=$(status_word); write_state "$_w"; echo "$_w" ;;
-  start)   clear_user_stopped; op_begin start; _run_and_announce start; _rc=$?; op_end; exit $_rc ;;
+  start)   clear_user_stopped; op_begin start; _refuse_without_room start; _run_and_announce start; _rc=$?; op_end; exit $_rc ;;
   stop)    op_begin stop; _run_and_announce stop; _rc=$?
            [ "$_rc" -eq 0 ] && mark_user_stopped
            op_end; exit $_rc ;;
@@ -26,9 +33,11 @@ case "${1:-}" in
   # Roll the VM onto the freshly-installed boot2docker.iso. Repoint first (a migrated host's stale
   # Boot2DockerURL would make `docker-machine upgrade` fail fetching the vanished DMG), then upgrade
   # (data disk preserved), then bring it up + heal the context. CLI-only; the menu drives this verb.
+  # Refused up front when the Mac can't fit the power-on, so a running VM isn't stopped into a pause.
   image-upgrade)
     clear_user_stopped   # it always brings the VM back up
     op_begin image-upgrade
+    _refuse_without_room image-upgrade
     repoint_iso_url
     if docker-machine upgrade "$MACHINE" >>"$LOG" 2>&1; then _rc=0; else _rc=$?; fi
     docker-machine start "$MACHINE" >>"$LOG" 2>&1 || true   # always bring the VM back up
@@ -55,6 +64,6 @@ case "${1:-}" in
     exit $_rc ;;
   setup)   clear_user_stopped; exec docker-machine-bootstrap ;;
   migrate) exec docker-machine-migrate ;;
-  vmx-pid) pgrep -f "machines/$MACHINE/.*\.vmx" 2>/dev/null | head -1 || true ;;
+  vmx-pid) vmx_pid ;;
   *) echo "usage: docker-machine-ctl {status|start|stop|restart|image-status|image-upgrade|disk-status|reclaimable|free-space|login-status|login-on|login-off|setup|migrate|vmx-pid}" >&2; exit 2 ;;
 esac

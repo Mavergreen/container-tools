@@ -65,6 +65,13 @@ main() {
     write_state no-fusion
     exit 0
   fi
+  if host_disk_full; then
+    log "VMware paused the VM: the Mac's disk is full; skipping this tick"
+    notify hostdisk "Container Tools for Mavericks" \
+      "Docker is paused because the Mac's disk is full. Free some space and it carries on by itself."
+    write_state host-disk-full
+    exit 0
+  fi
   if create_in_progress; then
     log "create already in progress; skipping this run"
     write_state creating
@@ -113,7 +120,15 @@ main() {
     write_state "$(status_word)"
     exit 0
   fi
-  [ "$_status" = "Running" ] || docker-machine start "$MACHINE" >>"$LOG" 2>&1 || true
+  if [ "$_status" != "Running" ]; then
+    if ! host_room_to_boot; then
+      log "not starting the VM: $ROOM_MSG"
+      notify hostdisk "Container Tools for Mavericks" "$ROOM_MSG"
+      write_state host-disk-full
+      exit 0
+    fi
+    docker-machine start "$MACHINE" >>"$LOG" 2>&1 || true
+  fi
   [ "$(machine_status)" = "Running" ] && sync_context
   case "$(disk_refresh)" in
     *" low")
