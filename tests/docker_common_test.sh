@@ -112,9 +112,79 @@ case_op_lock_status() {
   ( . "$COMMON"; op_begin image-upgrade )
   ( . "$COMMON"; [ "$(status_word)" = "working:image-upgrade" ] ) \
     || fail "status_word must report working:<op> while the lock is fresh"
+  rm -f "$MAVERICKS_DOCKER_STATE_DIR/op.lock/pid"   # a lock from before op.lock recorded its owner
   touch -t 200001010000 "$MAVERICKS_DOCKER_STATE_DIR/op.lock"
   ( . "$COMMON"; [ "$(status_word)" = running ] ) \
     || fail "a stale op.lock must be reclaimed, not reported as working"
+  teardown
+}
+
+# op.lock records the pid that holds it, and its liveness -- not the lock's age -- decides whether
+# the op is still going. An image-upgrade took 15+ min on 2026-10-24 (VMware had paused the VM for
+# host disk space); the old 600s reclaim let the login agent's tick run a concurrent start.
+case_op_lock_owner() {
+  setup; stub_dm Running
+  ( . "$COMMON"; op_begin image-upgrade )   # a subshell keeps $$: this live test shell holds it
+  [ "$(cat "$MAVERICKS_DOCKER_STATE_DIR/op.lock/pid")" = $$ ] || fail "op_begin must record its pid"
+  touch -t 200001010000 "$MAVERICKS_DOCKER_STATE_DIR/op.lock"
+  ( . "$COMMON"; [ "$(status_word)" = "working:image-upgrade" ] ) \
+    || fail "an old op.lock whose owner is alive must still report working"
+  sh -c 'exit 0' & _dead=$!; wait $_dead
+  printf '%s\n' "$_dead" > "$MAVERICKS_DOCKER_STATE_DIR/op.lock/pid"
+  touch "$MAVERICKS_DOCKER_STATE_DIR/op.lock"
+  ( . "$COMMON"; [ "$(status_word)" = running ] ) \
+    || fail "a fresh op.lock whose owner is gone must be reclaimed"
+  [ -d "$MAVERICKS_DOCKER_STATE_DIR/op.lock" ] && fail "reclaiming must remove op.lock"
+  teardown
+}
+
+# VMware pauses the VM when the host disk fills, and writes a noSpace question to vmware.log every
+# second while it waits. docker-machine then flaps between Running and Stopped, so status_word must
+# say what is actually wrong -- even mid-op, since the op is stuck on the same pause.
+stub_vmx() { # $1 = pid pgrep reports for the VM's vmx ("" => none)
+  printf '#!/bin/sh\n[ -n "%s" ] && echo %s\n' "$1" "$1" > "$BIN/pgrep"; chmod +x "$BIN/pgrep"
+}
+paused_log() {
+  export MAVERICKS_DOCKER_MACHDIR="$WORK/machines"; mkdir -p "$MAVERICKS_DOCKER_MACHDIR/container-tools"
+  cat > "$MAVERICKS_DOCKER_MACHDIR/container-tools/vmware.log" <<'LOG'
+2026-10-24T14:00:36.284-05:00| vmx| I125: Msg_Question:
+2026-10-24T14:00:36.284-05:00| vmx| I125: [msg.mainMemPosix.noSpaceCritical] The file system upon which '/x' resides is critically low on free space.
+2026-10-24T14:00:36.284-05:00| vmx| I125: [msg.mainMemPosix.noSpaceBasic] vmrun has paused this virtual machine because the disk on which the virtual machine is stored is almost full.
+2026-10-24T14:00:36.284-05:00| vmx| I125: ----------------------------------------
+2026-10-24T14:00:36.284-05:00| vmx| I125: MsgIsAnswered: Using builtin default 'Continue' as the answer for 'msg.mainMemPosix.noSpaceBasic'
+2026-10-24T14:00:36.284-05:00| vmx| I125: MsgQuestion: msg.mainMemPosix.noSpaceBasic reply=0
+LOG
+}
+case_host_disk_full() {
+  setup; stub_dm Running; stub_vmx 4242; paused_log
+  ( . "$COMMON"; [ "$(status_word)" = host-disk-full ] ) || fail "a paused-for-space VM -> host-disk-full"
+  ( . "$COMMON"; op_begin image-upgrade; [ "$(status_word)" = host-disk-full ] ) \
+    || fail "host-disk-full must win over working:<op>"
+  rm -rf "$MAVERICKS_DOCKER_STATE_DIR/op.lock"
+  touch -t 200001010000 "$MAVERICKS_DOCKER_MACHDIR/container-tools/vmware.log"
+  ( . "$COMMON"; [ "$(status_word)" = running ] ) || fail "a quiet log (the VM resumed) is not paused"
+  touch "$MAVERICKS_DOCKER_MACHDIR/container-tools/vmware.log"; stub_vmx ""
+  ( . "$COMMON"; [ "$(status_word)" = running ] ) || fail "no vmx process -> not paused"
+  teardown
+}
+
+# Fusion backs guest RAM with a memsize-sized .vmem file, allocated in full at every power-on (on
+# Fusion 8.5 for Mac, mainMem.useNamedFile = "FALSE" is read and ignored -- tried 2026-10-24). So
+# powering on needs memsize of free space plus headroom, or VMware pauses the VM for space.
+stub_df() { # $1 = KB available where the VM lives
+  printf '#!/bin/sh\necho "Filesystem 1024-blocks Used Available Capacity Mounted on"\necho "/dev/disk0s2 1 1 %s 99%% /"\n' "$1" \
+    > "$BIN/df"; chmod +x "$BIN/df"
+}
+case_host_room_to_boot() {
+  setup
+  export MAVERICKS_DOCKER_MACHDIR="$WORK/machines"; mkdir -p "$MAVERICKS_DOCKER_MACHDIR/container-tools"
+  printf 'memsize = "16384"\n' > "$MAVERICKS_DOCKER_MACHDIR/container-tools/container-tools.vmx"
+  stub_df 31457280   # 30 GB
+  ( . "$COMMON"; host_room_to_boot ) || fail "30 GB free is room for a 16 GB VM"
+  stub_df 18874368   # 18 GB: the .vmem fits, the headroom doesn't
+  ( . "$COMMON"; host_room_to_boot ) && fail "18 GB free is not room for a 16 GB VM plus headroom"
+  rm -f "$MAVERICKS_DOCKER_MACHDIR/container-tools/container-tools.vmx"
+  ( . "$COMMON"; host_room_to_boot ) || fail "no vmx to read memsize from must not block a start"
   teardown
 }
 
@@ -125,4 +195,7 @@ case_bindir_on_path
 case_image_status
 case_op_lock
 case_op_lock_status
+case_op_lock_owner
+case_host_disk_full
+case_host_room_to_boot
 echo "docker_common_test: OK"

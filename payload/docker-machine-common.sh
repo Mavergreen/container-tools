@@ -66,9 +66,18 @@ create_in_progress() {
 
 # op.lock is the ctl verbs' in-progress marker, kept SEPARATE from creating.lock on purpose:
 # the create path's atomic-acquire + interactive/migrate flows depend on creating.lock, and
-# folding the two buys only conceptual unity. Mirrors create_in_progress's 600s stale-reclaim.
+# folding the two buys only conceptual unity. It records the pid that holds it, and that pid's
+# liveness decides: an image-upgrade can legitimately outlast any fixed limit (2026-10-24: 15+ min,
+# with VMware paused for host disk space), and the old 600s reclaim let the login agent's tick start
+# the VM underneath it. A lock with no pid (taken by an older ctl) keeps the 600s age rule.
 op_in_progress() {
   [ -d "$OP_LOCK" ] || return 1
+  if _pid=$(cat "$OP_LOCK/pid" 2>/dev/null) && [ -n "$_pid" ]; then
+    kill -0 "$_pid" 2>/dev/null && return 0
+    log "op lock's owner (pid $_pid) is gone; reclaiming"
+    rm -rf "$OP_LOCK" 2>/dev/null || true
+    return 1
+  fi
   _mt=$(stat -f %m "$OP_LOCK" 2>/dev/null) || return 0
   if [ $(( $(date +%s) - _mt )) -gt 600 ]; then
     log "stale op lock; reclaiming"
@@ -103,6 +112,7 @@ op_begin() { # name  — announce a long op: create the lock and mark the state 
   mkdir -p "$STATE_DIR" 2>/dev/null || true
   mkdir "$OP_LOCK" 2>/dev/null || true
   printf '%s\n' "$_op" > "$OP_LOCK/name" 2>/dev/null || true
+  printf '%s\n' "$$" > "$OP_LOCK/pid" 2>/dev/null || true
   write_state "working:$_op"
 }
 
@@ -111,9 +121,41 @@ op_end() { # release the lock and settle the state to the real machine status
   write_state "$(status_word)"
 }
 
+vmx_pid() { pgrep -f "machines/$MACHINE/.*\.vmx" 2>/dev/null | head -1 || true; }
+
+# VMware pauses the VM when the Mac's disk fills, and asks a noSpace (guest RAM's .vmem) or
+# outofspace (the virtual disk) question in vmware.log once a second until it can carry on. Meanwhile
+# docker-machine's status flaps and every docker-machine command waits, so this is the one thing
+# worth telling the user. "Still asking" = the vmx is up and the log was written in the last 10s.
+host_disk_full() {
+  _vl="$MACHDIR/$MACHINE/vmware.log"
+  [ -f "$_vl" ] && [ -n "$(vmx_pid)" ] || return 1
+  _mt=$(stat -f %m "$_vl" 2>/dev/null) || return 1
+  [ $(( $(date +%s) - _mt )) -le 10 ] || return 1
+  tail -n 12 "$_vl" 2>/dev/null | grep -Eqi 'nospace|outofspace'
+}
+
+# Fusion backs guest RAM with a memsize-sized .vmem file in the VM's directory, allocated in full at
+# every power-on; for a 16 GB VM, that file is what filled the Mac's disk on 2026-10-24. (Fusion 8.5
+# for Mac reads mainMem.useNamedFile = "FALSE" and ignores it -- tried the same day.) So before
+# powering on, require the .vmem's size plus 4 GB of headroom, and say what's needed when short:
+# sets ROOM_MSG. A vmx we can't read memsize from doesn't block a start.
+host_room_to_boot() {
+  ROOM_MSG=
+  _mb=$(sed -n 's/^memsize *= *"\([0-9]*\)".*/\1/p' "$MACHDIR/$MACHINE/$MACHINE.vmx" 2>/dev/null | head -1)
+  [ -n "$_mb" ] || return 0
+  _avail=$(df -k "$MACHDIR" 2>/dev/null | awk 'NR == 2 { print $4 }')
+  [ -n "$_avail" ] || return 0
+  _need=$(( _mb * 1024 + 4 * 1024 * 1024 ))
+  [ "$_avail" -ge "$_need" ] && return 0
+  ROOM_MSG="Starting Docker needs about $(( (_need + 1048575) / 1048576 )) GB free on this Mac; $(( _avail / 1048576 )) GB free now."
+  return 1
+}
+
 # The single word the state file / menu bar cares about.
 status_word() {
   fusion_present || { echo no-fusion; return; }
+  host_disk_full && { echo host-disk-full; return; }
   create_in_progress && { echo creating; return; }
   op_in_progress && { echo "working:$(op_name)"; return; }
   case "$(machine_status)" in

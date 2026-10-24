@@ -446,6 +446,56 @@ EOF
 
 case_op_in_progress_skips
 
+# --- Case: VMware paused the VM for host disk space -> say so, and leave the machine alone ---
+# Every docker-machine command waits on the pause, so a tick that starts the VM only piles on.
+# The state and a notification say what to do. Holds even while an op owns the machine.
+case_host_disk_full() {
+  setup; make_docker
+  cat > "$BIN/docker-machine" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >> "$DM_LOG"
+case "\$1" in status) echo Stopped ;; start) : > "$WORK/started" ;; esac
+EOF
+  chmod +x "$BIN/docker-machine"
+  printf '#!/bin/sh\necho 4242\n' > "$BIN/pgrep"; chmod +x "$BIN/pgrep"
+  mkdir -p "$MAVERICKS_DOCKER_MACHDIR/container-tools"
+  printf '%s\n' "2026-10-24T14:00:36.284-05:00| vmx| I125: MsgQuestion: msg.mainMemPosix.noSpaceBasic reply=0" \
+    > "$MAVERICKS_DOCKER_MACHDIR/container-tools/vmware.log"
+  mkdir -p "$MAVERICKS_DOCKER_STATE_DIR/op.lock"
+  printf 'image-upgrade\n' > "$MAVERICKS_DOCKER_STATE_DIR/op.lock/name"
+  sh "$BOOT" || fail "should exit 0 when the host disk is full"
+  [ -f "$WORK/started" ] && fail "bootstrap must NOT start a VM VMware has paused"
+  [ "$(cat "$MAVERICKS_DOCKER_STATE_DIR/state" 2>/dev/null)" = host-disk-full ] \
+    || fail "bootstrap must announce host-disk-full"
+  grep -q "display notification.*Mac's disk" "$OSA_LOG" || fail "bootstrap must notify that the Mac's disk is full"
+  teardown
+}
+
+case_host_disk_full
+
+# --- Case: no room on the Mac to power a stopped VM on -> don't start it into a pause ---
+case_no_room_to_boot() {
+  setup; make_docker
+  mkdir -p "$MAVERICKS_DOCKER_MACHDIR/container-tools"
+  printf 'memsize = "16384"\n' > "$MAVERICKS_DOCKER_MACHDIR/container-tools/container-tools.vmx"
+  printf '#!/bin/sh\necho "Filesystem 1024-blocks Used Available Capacity Mounted on"\necho "/dev/x 1 1 3000000 99%% /"\n' \
+    > "$BIN/df"; chmod +x "$BIN/df"
+  cat > "$BIN/docker-machine" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >> "$DM_LOG"
+case "\$1" in status) echo Stopped ;; start) : > "$WORK/started" ;; esac
+EOF
+  chmod +x "$BIN/docker-machine"
+  sh "$BOOT" || fail "should exit 0"
+  [ -f "$WORK/started" ] && fail "bootstrap must NOT start a VM the Mac has no room to power on"
+  [ "$(cat "$MAVERICKS_DOCKER_STATE_DIR/state" 2>/dev/null)" = host-disk-full ] \
+    || fail "bootstrap must announce host-disk-full when there is no room to start"
+  grep -q "display notification.*GB free" "$OSA_LOG" || fail "bootstrap must say how much space starting needs"
+  teardown
+}
+
+case_no_room_to_boot
+
 # --- Case: a commented-out env line must NOT trigger the override warning ---
 case_env_commented() {
   setup; make_dm; make_docker

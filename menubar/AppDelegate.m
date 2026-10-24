@@ -74,6 +74,7 @@
   if ([s isEqualToString:@"creating"])  return @"Docker: Starting…";
   if ([s isEqualToString:@"absent"])    return @"Docker: Not set up";
   if ([s isEqualToString:@"no-fusion"]) return @"VMware Fusion needed";
+  if ([s isEqualToString:@"host-disk-full"]) return @"Docker: Paused (Mac disk full)";
   return @"Docker: (error)";
 }
 
@@ -90,6 +91,10 @@
 
   if ([state isEqualToString:@"no-fusion"]) {
     [m addItemWithTitle:@"Get VMware Fusion…" action:@selector(doGetFusion:) keyEquivalent:@""];
+  } else if ([state isEqualToString:@"host-disk-full"]) {
+    // VMware paused the VM and carries on by itself once there is room; nothing here would help.
+    NSMenuItem *hint = [m addItemWithTitle:@"Free space on this Mac to resume" action:NULL keyEquivalent:@""];
+    hint.enabled = NO;
   } else if ([state isEqualToString:@"absent"] || [state isEqualToString:@"error"]) {
     [m addItemWithTitle:@"Set Up / Repair…" action:@selector(doSetup:) keyEquivalent:@""];
   } else if (![state isEqualToString:@"creating"] && ![state hasPrefix:@"working"]) {
@@ -256,6 +261,7 @@
   BOOL attention = [state isEqualToString:@"no-fusion"] ||
                    [state isEqualToString:@"absent"]    ||
                    [state isEqualToString:@"error"]     ||
+                   [state isEqualToString:@"host-disk-full"] ||
                    (running && self.diskLow);
 
   NSImage *img = [NSImage imageWithSize:NSMakeSize(18, 18) flipped:NO
