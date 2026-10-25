@@ -47,7 +47,7 @@ runs "lazydocker --version"         'Version'                "$B/lazydocker" --v
 STATE="$HOME/Library/Application Support/Mavergreen/container-tools/state"
 "$B/docker-machine-ctl" status > "$OUT" 2>&1 || fail "docker-machine-ctl status exited non-zero"
 case "$(cat "$OUT")" in
-  running|stopped|absent|creating|no-fusion|error|working:*) echo "ok: docker-machine-ctl status ($(cat "$OUT"))" ;;
+  running|stopped|absent|creating|no-fusion|host-disk-full|error|working:*) echo "ok: docker-machine-ctl status ($(cat "$OUT"))" ;;
   *) fail "docker-machine-ctl status printed no status word" ;;
 esac
 "$B/docker-machine-ctl" disk-status > "$OUT" 2>&1 || fail "docker-machine-ctl disk-status exited non-zero"
