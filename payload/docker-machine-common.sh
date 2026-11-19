@@ -521,3 +521,30 @@ repoint_iso_url() {
   _cfg="$MACHDIR/$MACHINE/config.json"
   [ -f "$_cfg" ] && sed -i '' "s|\"Boot2DockerURL\": *\"[^\"]*\"|\"Boot2DockerURL\": \"$ISO\"|" "$_cfg" 2>/dev/null || true
 }
+
+# Read the VM's configured RAM and CPU from the VMX file (memsize/numvcpus) when both are
+# valid positive integers; otherwise fall back to the docker-machine driver JSON (Driver.Memory /
+# Driver.CPU). Never combine values from different sources. Print:
+#   memory_mib=N
+#   vcpus=N
+#   source=vmx|driver
+# or the single word "unknown" when no source has a complete valid pair. Exit 0 always.
+# Read-only: never writes VMX, never starts/stops/creates the VM, never changes context.
+resource_status() {
+  _rs_vmx="$MACHDIR/$MACHINE/$MACHINE.vmx"
+  _rs_mem=$(sed -n 's/^memsize *= *"\([0-9]*\)".*/\1/p' "$_rs_vmx" 2>/dev/null | head -1)
+  _rs_cpu=$(sed -n 's/^numvcpus *= *"\([0-9]*\)".*/\1/p' "$_rs_vmx" 2>/dev/null | head -1)
+  if [ -n "$_rs_mem" ] && [ "$_rs_mem" -gt 0 ] 2>/dev/null \
+  && [ -n "$_rs_cpu" ] && [ "$_rs_cpu" -gt 0 ] 2>/dev/null; then
+    printf 'memory_mib=%s\nvcpus=%s\nsource=vmx\n' "$_rs_mem" "$_rs_cpu"
+    return
+  fi
+  _rs_mem=$(docker-machine inspect "$MACHINE" --format '{{.Driver.Memory}}' 2>/dev/null)
+  _rs_cpu=$(docker-machine inspect "$MACHINE" --format '{{.Driver.CPU}}' 2>/dev/null)
+  if [ -n "$_rs_mem" ] && [ "$_rs_mem" -gt 0 ] 2>/dev/null \
+  && [ -n "$_rs_cpu" ] && [ "$_rs_cpu" -gt 0 ] 2>/dev/null; then
+    printf 'memory_mib=%s\nvcpus=%s\nsource=driver\n' "$_rs_mem" "$_rs_cpu"
+    return
+  fi
+  echo unknown
+}

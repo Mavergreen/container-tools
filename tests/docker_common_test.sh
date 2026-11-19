@@ -200,6 +200,111 @@ case_host_room_to_boot() {
   teardown
 }
 
+# resource_status() reads VMX memsize/numvcpus (source=vmx) or docker-machine inspect Driver
+# fields (source=driver), prefers VMX when both values are valid positive integers, and prints
+# "unknown" when no source has a complete valid pair. Never writes VMX or changes VM state.
+stub_dm_inspect() { # mem_mib cpu
+  cat > "$BIN/docker-machine" <<EOF
+#!/bin/sh
+printf '%s\\n' "\$*" >> "$WORK/dm.args"
+case "\$*" in
+  *Memory*) printf '%s\\n' "$1" ;;
+  *CPU*)    printf '%s\\n' "$2" ;;
+  *status*) printf 'Stopped\\n' ;;
+esac
+exit 0
+EOF
+  chmod +x "$BIN/docker-machine"
+}
+
+case_resource_status() {
+  setup
+  : > "$WORK/dm.args"
+  export MAVERICKS_DOCKER_MACHDIR="$WORK/machines"
+  mkdir -p "$MAVERICKS_DOCKER_MACHDIR/container-tools"
+  _vmx="$MAVERICKS_DOCKER_MACHDIR/container-tools/container-tools.vmx"
+
+  # VMX both valid -> source=vmx
+  printf 'memsize = "2048"\nnumvcpus = "2"\n' > "$_vmx"
+  stub_dm_inspect 1024 1
+  out=$( . "$COMMON"; resource_status )
+  [ "$out" = "$(printf 'memory_mib=2048\nvcpus=2\nsource=vmx')" ] \
+    || fail "VMX source: got: $out"
+
+  # VMX 2048/2 must override stale driver 1024/1
+  stub_dm_inspect 1024 1
+  out=$( . "$COMMON"; resource_status )
+  [ "$out" = "$(printf 'memory_mib=2048\nvcpus=2\nsource=vmx')" ] \
+    || fail "VMX must override driver: got: $out"
+
+  # Driver-only: no VMX file, driver 4096/2 -> source=driver
+  rm -f "$_vmx"
+  stub_dm_inspect 4096 2
+  out=$( . "$COMMON"; resource_status )
+  [ "$out" = "$(printf 'memory_mib=4096\nvcpus=2\nsource=driver')" ] \
+    || fail "driver-only: got: $out"
+
+  # Malformed VMX (zero mem) + valid driver 4096/2 -> source=driver
+  printf 'memsize = "0"\nnumvcpus = "2"\n' > "$_vmx"
+  stub_dm_inspect 4096 2
+  out=$( . "$COMMON"; resource_status )
+  [ "$out" = "$(printf 'memory_mib=4096\nvcpus=2\nsource=driver')" ] \
+    || fail "malformed VMX falls to driver: got: $out"
+
+  # Both sources zero -> unknown
+  printf 'memsize = "0"\nnumvcpus = "0"\n' > "$_vmx"
+  stub_dm_inspect 0 0
+  out=$( . "$COMMON"; resource_status )
+  [ "$out" = "unknown" ] || fail "both zero -> unknown: got: $out"
+
+  # VMX non-numeric/negative + empty driver -> unknown
+  printf 'memsize = "abc"\nnumvcpus = "-1"\n' > "$_vmx"
+  stub_dm_inspect "" ""
+  out=$( . "$COMMON"; resource_status )
+  [ "$out" = "unknown" ] || fail "non-numeric/negative VMX + empty driver -> unknown: got: $out"
+
+  # VMX must not be written (read-only)
+  printf 'memsize = "2048"\nnumvcpus = "2"\n' > "$_vmx"
+  _vmx_before=$(cat "$_vmx")
+  stub_dm_inspect 1024 1
+  ( . "$COMMON"; resource_status ) >/dev/null
+  [ "$(cat "$_vmx")" = "$_vmx_before" ] || fail "resource_status must not modify VMX"
+
+  # No forbidden dm calls across all above cases
+  grep -qE '^(start|stop|create|regenerate-certs) ' "$WORK/dm.args" \
+    && fail "resource_status must not call start/stop/create/regenerate-certs"
+  grep -q 'context use' "$WORK/dm.args" \
+    && fail "resource_status must not call context use"
+
+  # creating.lock preserved; op.lock not created
+  mkdir -p "$MAVERICKS_DOCKER_STATE_DIR/creating.lock"
+  stub_dm_inspect 1024 1
+  ( . "$COMMON"; resource_status ) >/dev/null
+  [ -d "$MAVERICKS_DOCKER_STATE_DIR/creating.lock" ] \
+    || fail "resource_status must not remove creating.lock"
+  [ -d "$MAVERICKS_DOCKER_STATE_DIR/op.lock" ] \
+    && fail "resource_status must not create op.lock"
+
+  # Path with spaces: VMX read works
+  _spdir="$WORK/ma ch dir"
+  mkdir -p "$_spdir/container-tools"
+  printf 'memsize = "2048"\nnumvcpus = "2"\n' > "$_spdir/container-tools/container-tools.vmx"
+  stub_dm_inspect 1024 1
+  out=$( MAVERICKS_DOCKER_MACHDIR="$_spdir"; . "$COMMON"; resource_status )
+  [ "$out" = "$(printf 'memory_mib=2048\nvcpus=2\nsource=vmx')" ] \
+    || fail "path with spaces: got: $out"
+
+  # Injected MACHDIR: no sentinel created
+  _sentinel="$WORK/sentinel"
+  stub_dm_inspect "" ""
+  ( MAVERICKS_DOCKER_MACHDIR="$WORK/inj; touch $_sentinel"; . "$COMMON"; resource_status ) \
+    >/dev/null 2>&1 || true
+  [ -f "$_sentinel" ] && fail "injected MACHDIR must not create sentinel"
+  : # pass
+
+  teardown
+}
+
 case_status_word
 case_creating
 case_write_state
@@ -211,4 +316,5 @@ case_op_lock_owner
 case_host_disk_full
 case_host_disk_full_stale_question
 case_host_room_to_boot
+case_resource_status
 echo "docker_common_test: OK"

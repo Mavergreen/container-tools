@@ -30,6 +30,7 @@ case "${1:-}" in
            op_end; exit $_rc ;;
   restart) clear_user_stopped; op_begin restart; _run_and_announce restart; _rc=$?; op_end; exit $_rc ;;
   image-status) image_status ;;
+  resource-status) resource_status ;;
   # Roll the VM onto the freshly-installed boot2docker.iso. Repoint first (a migrated host's stale
   # Boot2DockerURL would make `docker-machine upgrade` fail fetching the vanished DMG), then upgrade
   # (data disk preserved), then bring it up + heal the context. CLI-only; the menu drives this verb.
@@ -82,5 +83,5 @@ case "${1:-}" in
   setup)   clear_user_stopped; exec docker-machine-bootstrap ;;
   migrate) exec docker-machine-migrate ;;
   vmx-pid) vmx_pid ;;
-  *) echo "usage: docker-machine-ctl {status|start|stop|restart|image-status|image-upgrade|disk-status|reclaimable|free-space|auto-free|disk-advice|enlarge-disk-plan|enlarge-disk [GB]|readiness|ensure-ready|repair|diagnostics|readiness-version|login-status|login-on|login-off|setup|migrate|vmx-pid}" >&2; exit 2 ;;
+  *) echo "usage: docker-machine-ctl {status|start|stop|restart|image-status|image-upgrade|resource-status|disk-status|reclaimable|free-space|auto-free|disk-advice|enlarge-disk-plan|enlarge-disk [GB]|readiness|ensure-ready|repair|diagnostics|readiness-version|login-status|login-on|login-off|setup|migrate|vmx-pid}" >&2; exit 2 ;;
 esac

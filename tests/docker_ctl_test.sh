@@ -663,6 +663,73 @@ case_start_announces() {
   teardown
 }
 
+# CLI surface for resource_status(): docker-machine-ctl resource-status
+# Prints three lines (memory_mib=N, vcpus=N, source=vmx|driver) or the single word unknown.
+# Always exits 0 (even for unknown). Never calls start/stop/create/regenerate-certs/context-use.
+case_resource_status() {
+  setup
+  export MAVERICKS_DOCKER_MACHDIR="$WORK/machines"
+  mkdir -p "$MAVERICKS_DOCKER_MACHDIR/container-tools"
+  _vmx="$MAVERICKS_DOCKER_MACHDIR/container-tools/container-tools.vmx"
+
+  # Stub handles status + inspect format queries
+  cat > "$BIN/docker-machine" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >> "$DM_LOG"
+case "\$*" in
+  *Memory*) echo 2048 ;;
+  *CPU*)    echo 2 ;;
+  *status*) echo Running ;;
+esac
+exit 0
+EOF
+  chmod +x "$BIN/docker-machine"
+
+  # VMX source
+  printf 'memsize = "2048"\nnumvcpus = "2"\n' > "$_vmx"
+  out=$(sh "$CTL" resource-status)
+  [ "$out" = "$(printf 'memory_mib=2048\nvcpus=2\nsource=vmx')" ] \
+    || fail "resource-status VMX: got: $out"
+
+  # Driver-only (no VMX)
+  rm -f "$_vmx"
+  out=$(sh "$CTL" resource-status)
+  [ "$out" = "$(printf 'memory_mib=2048\nvcpus=2\nsource=driver')" ] \
+    || fail "resource-status driver: got: $out"
+
+  # Both sources invalid -> unknown, exit 0
+  cat > "$BIN/docker-machine" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >> "$DM_LOG"
+case "\$*" in
+  *Memory*|*CPU*) echo 0 ;;
+  *status*)       echo Stopped ;;
+esac
+exit 0
+EOF
+  chmod +x "$BIN/docker-machine"
+  out=$(sh "$CTL" resource-status)
+  [ "$out" = "unknown" ] || fail "resource-status unknown: got: $out"
+  _rc=0; sh "$CTL" resource-status >/dev/null || _rc=$?
+  [ "$_rc" -eq 0 ] || fail "resource-status unknown must exit 0, got: $_rc"
+
+  # No forbidden dm calls, no op.lock created
+  grep -qE '^(start|stop|create|regenerate-certs) ' "$DM_LOG" \
+    && fail "resource-status must not call start/stop/create/regenerate-certs"
+  grep -q 'context use' "$DM_LOG" \
+    && fail "resource-status must not call context use"
+  [ -d "$MAVERICKS_DOCKER_STATE_DIR/op.lock" ] \
+    && fail "resource-status must not create op.lock"
+
+  # Stopped machine with creating.lock: lock preserved
+  mkdir -p "$MAVERICKS_DOCKER_STATE_DIR/creating.lock"
+  sh "$CTL" resource-status >/dev/null
+  [ -d "$MAVERICKS_DOCKER_STATE_DIR/creating.lock" ] \
+    || fail "resource-status must not remove creating.lock"
+
+  teardown
+}
+
 case_status
 case_start_stop
 case_stop_marks_user_stopped
@@ -696,4 +763,5 @@ case_vmxpid
 case_setup
 case_packaging
 case_release_concurrency
+case_resource_status
 echo "docker_ctl_test: OK"
