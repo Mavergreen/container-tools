@@ -25,6 +25,7 @@ Releases through `20260727-mavericks.37` used the port scheme. Sparkle orders `2
 | boot2docker build base (Debian) | `components/boot2docker/version` (`BASE=debian:<N>-slim@sha256:…`) | ✅ `docker` + `currentDigest` (digest refreshes and the next Debian major) | same; replaces upstream's hard-coded `FROM` (`cmake/rebase_dockerfile.sh`), whose bullseye aged out of security support and broke `apt-get update` |
 | boot2docker patch overlay | `components/boot2docker/patches/*.patch` | n/a (this repo's own fix) | **is** an ingredient — it is applied into the iso, so a change rebuilds it |
 | Mavergreen Go cross toolchain | `components/golang/version` | ✅ `github-releases` on `Mavergreen/golang-126` | watched path → repackage rebuilt on the new Go |
+| Longboat (CI only) | `components/longboat/version` | ✅ `github-releases` on `Mavergreen/longboat` | not shipped: `build-macos` installs it for `sdk109`, the 10.9 SDK the Go cross toolchain's cgo compiles against; excluded from the repackage trigger, so a bump re-runs CI and releases nothing |
 | MacOSX10.9 SDK, Sparkle framework | `Mavergreen/shipyard@v1` | ✅ github-actions manager tracks the tag | `@v1` is a *moving* tag: content changes without the pin changing, so nothing auto-repackages |
 
 Not ingredients: `cmake/`, `menubar/`, `payload/`, and the updater are this repo's own code. A change

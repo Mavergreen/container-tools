@@ -139,6 +139,17 @@ jobs:
           VER: ${{ needs.ver.outputs.version }}
         run: printf '%s\n' "$VER" > VERSION
 
+      # spec: golang-126 e01ed1a3e (2026-10-27): the go126 cross toolchain's cgo wrapper compiles against
+      #       Longboat's sdk109 and ships no SDK of its own. Longboat is pinned in
+      #       components/longboat/version (CI only, Renovate-tracked; repackage-on-ingredient-bump.yml
+      #       excludes it, since nothing of it ships).
+      - name: Install Longboat and its 10.9 SDK (sdk109)
+        run: |
+          lb="$(tr -d '[:space:]' < components/longboat/version)"
+          pkg="$(sh "$SHIPYARD_SCRIPTS/fetch-release-pkg.sh" longboat "$lb" "longboat-$lb.pkg" "$RUNNER_TEMP/longboat")"
+          sudo installer -pkg "$pkg" -target /
+          sudo /usr/local/mavergreen/longboat/bin/longboat sdk install 10.9
+
       # The 10.9-correct Go toolchain (patched mavericks-golang cross .pkg; see the comment history).
       - name: Install patched Go (mavericks-golang cross toolchain)
         run: |
