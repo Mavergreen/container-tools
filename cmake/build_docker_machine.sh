@@ -9,7 +9,7 @@ SRC=$1; OUT=$2; GO=$3; GP=$4
 mkdir -p "$OUT"
 cd "$SRC"
 unset CC
-export GOPATH="$GP" GO111MODULE=off CGO_ENABLED=1 GOARCH=amd64
+export GOPATH="$GP" GO111MODULE=off CGO_ENABLED=1 GOARCH=amd64 GOTOOLCHAIN=local
 "$GO" build -ldflags "-linkmode=external" -o "$OUT/docker-machine" ./cmd/docker-machine
 [ -f "$OUT/docker-machine" ] || { echo "no docker-machine binary produced" >&2; exit 1; }
 echo "docker-machine: $OUT/docker-machine"

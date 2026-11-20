@@ -21,7 +21,7 @@ ln -sf vendor.sum go.sum
 rm -f ._go.mod ._go.sum   # NFS AppleDouble sidecars make the pinned clone look dirty (-> ".dirty" version)
 COMMIT=$(git rev-parse --short HEAD)
 unset CC
-export CGO_ENABLED=1 GOARCH=amd64
+export CGO_ENABLED=1 GOARCH=amd64 GOTOOLCHAIN=local
 "$GO" build -mod=vendor \
   -ldflags "-linkmode=external \
             -X github.com/docker/cli/cli/version.Version=$VER \

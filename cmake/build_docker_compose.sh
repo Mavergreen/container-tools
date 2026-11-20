@@ -9,7 +9,7 @@ SRC=$1; OUT=$2; GO=$3; REF=$4
 mkdir -p "$OUT"
 cd "$SRC"
 unset CC
-export CGO_ENABLED=1 GOARCH=amd64
+export CGO_ENABLED=1 GOARCH=amd64 GOTOOLCHAIN=local
 MOD=$(awk '/^module /{print $2; exit}' go.mod)   # -X tracks the module's major-version suffix (v2 -> v5)
 "$GO" build -ldflags "-linkmode=external -X $MOD/internal.Version=$REF" -o "$OUT/docker-compose" ./cmd
 [ -f "$OUT/docker-compose" ] || { echo "no docker-compose binary produced" >&2; exit 1; }
