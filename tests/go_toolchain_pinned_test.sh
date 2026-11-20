@@ -17,12 +17,19 @@ exit 1
 EOF
 chmod +x "$T/go"
 
+# A git stub too: build_docker_cli.sh runs git, and 10.9 without the Command Line Tools has none.
+mkdir -p "$T/bin"
+cat > "$T/bin/git" <<'EOF2'
+#!/bin/sh
+case " $* " in *" rev-parse "*) echo 0123abc ;; esac
+exit 0
+EOF2
+chmod +x "$T/bin/git"
+PATH="$T/bin:$PATH"; export PATH
+
 mkdir -p "$T/src"
 printf 'module github.com/docker/compose/v5\n\ngo 1.99.0\n' > "$T/src/go.mod"
 : > "$T/src/vendor.mod"; : > "$T/src/vendor.sum"
-git -C "$T/src" init -q
-git -C "$T/src" -c user.email=t@example.com -c user.name=t add -A
-git -C "$T/src" -c user.email=t@example.com -c user.name=t commit -qm src
 
 # The scripts find their patch overlays beside themselves; a copy in a tree with none applies none.
 mkdir -p "$T/repo/cmake" "$T/repo/components/docker-cli/patches"
