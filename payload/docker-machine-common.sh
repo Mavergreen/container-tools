@@ -184,6 +184,38 @@ disk_refresh() {
   printf '%s\n' "$_d"
 }
 
+# What a low disk gets without asking: only what is safe unattended. Dangling images (no -a, so
+# never a tagged image, which may be impossible to rebuild) and build cache; never a container or
+# a volume, which can hold the user's data. The menu's Free Up Space… still does the -a prune,
+# after a confirmation. Takes op.lock atomically, so it never runs under a start, stop or upgrade,
+# and fails if another op holds it. Records when it ran BEFORE pruning, so a failing prune is
+# rate-limited too (auto_free_due).
+AUTO_FREE_STAMP="$STATE_DIR/auto-free-last"
+AUTO_FREE_EVERY=21600   # seconds: at most once every 6 hours
+auto_free_due() {
+  _last=$(cat "$AUTO_FREE_STAMP" 2>/dev/null) || return 0
+  case "$_last" in ''|*[!0-9]*) return 0 ;; esac
+  [ $(( $(date +%s) - _last )) -ge "$AUTO_FREE_EVERY" ]
+}
+auto_free_space() {
+  mkdir -p "$STATE_DIR" 2>/dev/null || true
+  if ! mkdir "$OP_LOCK" 2>/dev/null; then
+    op_in_progress && return 1   # reclaims a dead owner's lock, then try once more
+    mkdir "$OP_LOCK" 2>/dev/null || return 1
+  fi
+  printf 'auto-free\n' > "$OP_LOCK/name" 2>/dev/null || true
+  printf '%s\n' "$$" > "$OP_LOCK/pid" 2>/dev/null || true
+  write_state working:auto-free
+  date +%s > "$AUTO_FREE_STAMP" 2>/dev/null || true
+  log "auto-free: disk was $(cat "$DISK_FILE" 2>/dev/null || echo unknown); removing dangling images and build cache"
+  _rc=0
+  docker --context "$CONTEXT" image prune -f >>"$LOG" 2>&1 || _rc=$?
+  docker --context "$CONTEXT" builder prune -f >>"$LOG" 2>&1 || _rc=$?
+  log "auto-free: disk now $(disk_refresh)"
+  op_end
+  return $_rc
+}
+
 write_state() {
   # Atomic: write a temp then rename, so a reader (or the menu-bar app's kqueue watch)
   # never sees a truncated/empty file mid-write. The watcher re-arms on the rename.

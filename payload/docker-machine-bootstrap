@@ -130,7 +130,11 @@ main() {
     docker-machine start "$MACHINE" >>"$LOG" 2>&1 || true
   fi
   [ "$(machine_status)" = "Running" ] && sync_context
-  case "$(disk_refresh)" in
+  _disk=$(disk_refresh)
+  case "$_disk" in
+    *" low") if auto_free_due; then auto_free_space || true; _disk=$(cat "$DISK_FILE" 2>/dev/null); fi ;;
+  esac
+  case "$_disk" in
     *" low")
       notify disklow "Container Tools for Mavericks" \
         "The Docker VM's disk is almost full. Choose Free Up Space… in the Container Tools menu." ;;

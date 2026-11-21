@@ -192,6 +192,74 @@ case_tick_warns_low_disk() {
 case_tick_refreshes_disk
 case_tick_warns_low_disk
 
+# A low disk is first helped automatically, with only what is safe unattended: dangling images (no
+# -a: never a tagged image, which may be impossible to rebuild) and build cache. Never containers or
+# volumes. At most once every 6 hours, under op.lock, and the notification only if still low.
+# The df stub reads low until the docker stub has pruned, when $1 = fixes.
+stub_vm_pruning() { # $1 = fixes | stays-low
+  cat > "$BIN/docker-machine" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >> "$DM_LOG"
+case "\$1" in
+  status) echo Running ;;
+  ssh)    echo 'Filesystem 1024-blocks Used Available Capacity Mounted on'
+          if [ "$1" = fixes ] && [ -f "$WORK/pruned" ]; then echo '/dev/sda1 18668944 12460804 5219012 70% /mnt/sda1'
+          else echo '/dev/sda1 18668944 16000000 1700000 91% /mnt/sda1'; fi ;;
+  env)    echo 'export DOCKER_HOST="tcp://192.168.237.131:2376"'
+          echo "export DOCKER_CERT_PATH=\"$HOME/x\"" ;;
+esac
+EOF
+  chmod +x "$BIN/docker-machine"
+  cat > "$BIN/docker" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >> "$DOCKER_LOG"
+case "\$*" in
+  *"context inspect"*) exit 1 ;;
+  *prune*) [ -d "$MAVERICKS_DOCKER_STATE_DIR/op.lock" ] || echo "prune without op.lock" >> "$WORK/violations"
+           touch "$WORK/pruned" ;;
+esac
+exit 0
+EOF
+  chmod +x "$BIN/docker"
+}
+PRUNES() { grep -c 'prune' "$DOCKER_LOG" || true; }
+case_tick_auto_frees_low_disk() {
+  setup; stub_vm_pruning fixes
+  sh "$BOOT" || fail "tick should exit 0"
+  grep -qx -- '--context mavericks image prune -f' "$DOCKER_LOG" || fail "a low disk must prune dangling images"
+  grep -qx -- '--context mavericks builder prune -f' "$DOCKER_LOG" || fail "a low disk must prune build cache"
+  grep -q -- 'prune -a\|--all' "$DOCKER_LOG" && fail "unattended pruning must never remove tagged images (-a)"
+  grep -E -q -e 'volume' -e 'container prune' -e 'system prune' "$DOCKER_LOG" && fail "unattended pruning must never touch containers or volumes"
+  [ -f "$WORK/violations" ] && fail "pruning must hold op.lock: $(cat "$WORK/violations")"
+  [ -d "$MAVERICKS_DOCKER_STATE_DIR/op.lock" ] && fail "auto-free must release op.lock"
+  [ "$(cat "$MAVERICKS_DOCKER_STATE_DIR/disk")" = "18668944 12460804 5219012 ok" ] || fail "auto-free must refresh the disk cache"
+  grep -q 'almost full' "$OSA_LOG" && fail "no notification when auto-free brought the disk back from low"
+  grep -q 'auto-free' "$MAVERICKS_DOCKER_LOG" || fail "auto-free must say in the log what it did"
+  teardown
+}
+case_tick_auto_free_still_low_notifies() {
+  setup; stub_vm_pruning stays-low
+  sh "$BOOT" || fail "tick should exit 0"
+  [ "$(PRUNES)" -eq 2 ] || fail "a low disk must be pruned once (got $(PRUNES) prunes)"
+  grep -q 'almost full' "$OSA_LOG" || fail "still low after auto-free: notify, pointing at Free Up Space"
+  teardown
+}
+case_tick_auto_free_rate_limited() {
+  setup; stub_vm_pruning stays-low
+  sh "$BOOT" || fail "tick should exit 0"
+  : > "$DOCKER_LOG"
+  sh "$BOOT" || fail "second tick should exit 0"
+  [ "$(PRUNES)" -eq 0 ] || fail "auto-free must not run again within 6 hours"
+  echo $(( $(date +%s) - 6 * 3600 - 1 )) > "$MAVERICKS_DOCKER_STATE_DIR/auto-free-last"
+  sh "$BOOT" || fail "third tick should exit 0"
+  [ "$(PRUNES)" -eq 2 ] || fail "auto-free must run again once 6 hours have passed"
+  teardown
+}
+
+case_tick_auto_frees_low_disk
+case_tick_auto_free_still_low_notifies
+case_tick_auto_free_rate_limited
+
 # --- Case: running -> create context from docker-machine env, then use it ---
 case_context_create() {
   setup; make_dm; make_docker

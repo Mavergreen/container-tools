@@ -132,6 +132,30 @@ case_free_space() {
   [ "$(cat "$(DISKF)")" = "18668944 12460804 5219012 ok" ] || fail "free-space must refresh the cached disk numbers"
   teardown
 }
+# auto-free: what the login agent's tick runs on a low disk, also callable by hand. Only dangling
+# images and build cache; refused while another op holds op.lock, so it never runs under a start,
+# stop or upgrade.
+case_auto_free() {
+  setup; stub_dm_df Running '/dev/sda1 18668944 12460804 5219012 70% /mnt/sda1'; stub_docker_df
+  sh "$CTL" auto-free >/dev/null || fail "auto-free exit 0"
+  grep -qx -- '--context mavericks image prune -f' "$DOCKER_LOG" || fail "auto-free must remove dangling images"
+  grep -qx -- '--context mavericks builder prune -f' "$DOCKER_LOG" || fail "auto-free must remove build cache"
+  grep -q -- 'prune -a\|--all\|volume\|container prune\|system prune' "$DOCKER_LOG" \
+    && fail "auto-free must never remove tagged images, containers or volumes"
+  [ "$(cat "$(DISKF)")" = "18668944 12460804 5219012 ok" ] || fail "auto-free must refresh the cached disk numbers"
+  [ -s "$MAVERICKS_DOCKER_STATE_DIR/auto-free-last" ] || fail "auto-free must record when it ran"
+  [ -d "$MAVERICKS_DOCKER_STATE_DIR/op.lock" ] && fail "auto-free must release op.lock"
+  teardown
+}
+case_auto_free_waits_for_op() {
+  setup; stub_dm_df Running '/dev/sda1 18668944 16000000 1700000 91% /mnt/sda1'; stub_docker_df
+  mkdir -p "$MAVERICKS_DOCKER_STATE_DIR/op.lock"
+  echo image-upgrade > "$MAVERICKS_DOCKER_STATE_DIR/op.lock/name"; echo $$ > "$MAVERICKS_DOCKER_STATE_DIR/op.lock/pid"
+  sh "$CTL" auto-free >/dev/null && fail "auto-free must fail while another op holds op.lock"
+  grep -q prune "$DOCKER_LOG" && fail "auto-free must not prune while another op holds op.lock"
+  [ "$(cat "$MAVERICKS_DOCKER_STATE_DIR/op.lock/name")" = image-upgrade ] || fail "auto-free must leave another op's lock alone"
+  teardown
+}
 case_stop_marks_user_stopped() {
   setup; stub_dm Stopped
   MAVERICKS_DOCKER_BOOT_ID=boot-A sh "$CTL" stop >/dev/null || fail "stop exit 0"
@@ -368,6 +392,8 @@ case_disk_status_low
 case_disk_status_unknown
 case_reclaimable
 case_free_space
+case_auto_free
+case_auto_free_waits_for_op
 case_image
 case_image_upgrade_fails
 case_start_announces

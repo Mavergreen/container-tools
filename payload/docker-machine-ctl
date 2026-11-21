@@ -62,8 +62,10 @@ case "${1:-}" in
     disk_refresh >/dev/null
     op_end
     exit $_rc ;;
+  # What the login agent's tick runs on a low disk (see auto_free_space); fails while another op runs.
+  auto-free) auto_free_space ;;
   setup)   clear_user_stopped; exec docker-machine-bootstrap ;;
   migrate) exec docker-machine-migrate ;;
   vmx-pid) vmx_pid ;;
-  *) echo "usage: docker-machine-ctl {status|start|stop|restart|image-status|image-upgrade|disk-status|reclaimable|free-space|login-status|login-on|login-off|setup|migrate|vmx-pid}" >&2; exit 2 ;;
+  *) echo "usage: docker-machine-ctl {status|start|stop|restart|image-status|image-upgrade|disk-status|reclaimable|free-space|auto-free|login-status|login-on|login-off|setup|migrate|vmx-pid}" >&2; exit 2 ;;
 esac

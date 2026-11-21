@@ -67,6 +67,7 @@
     if ([op isEqualToString:@"stop"])          return @"Stopping Docker…";
     if ([op isEqualToString:@"restart"])       return @"Restarting Docker…";
     if ([op isEqualToString:@"free-space"])    return @"Freeing up space…";
+    if ([op isEqualToString:@"auto-free"])     return @"Freeing up space…";
     return @"Working…";
   }
   if ([s isEqualToString:@"running"])   return @"Docker: Running";
