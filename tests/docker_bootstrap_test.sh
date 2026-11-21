@@ -673,4 +673,109 @@ EOF
 
 case_legacy_default_stopped_migrates
 case_legacy_default_running_defers
+
+# --- Task 4: GUI resource advisory after a successful fresh create ---
+
+# Case: fresh create with 1024 MiB / 1 vCPU -> once/day gui-resources advisory fires.
+# The 2 GiB/two-vCPU baseline matches Task 2's check_gui_resources() threshold.
+case_fresh_create_gui_advisory() {
+  setup; make_docker
+  mkdir -p "$MAVERICKS_DOCKER_MACHDIR/container-tools"
+  printf 'memsize = "1024"\nnumvcpus = "1"\n' \
+    > "$MAVERICKS_DOCKER_MACHDIR/container-tools/container-tools.vmx"
+  cat > "$BIN/docker-machine" <<EOF
+#!/bin/sh
+printf '%s\\n' "\$*" >> "$DM_LOG"
+case "\$1" in
+  status) [ -f "$WORK/created" ] && { echo Stopped; exit 0; }; exit 1 ;;
+  create) : > "$WORK/created" ;;
+  start)  : > "$WORK/started" ;;
+  env)    echo 'export DOCKER_HOST="tcp://192.168.237.131:2376"'
+          echo "export DOCKER_CERT_PATH=\"$HOME/x\"" ;;
+  inspect) exit 1 ;;
+esac
+EOF
+  chmod +x "$BIN/docker-machine"
+  sh "$BOOT" || fail "fresh-create advisory path should exit 0"
+  grep -q '2 GiB' "$OSA_LOG" || fail "expected gui-resources advisory mentioning 2 GiB after fresh create with 1024 MiB/1 vCPU"
+  teardown
+}
+
+# Case: fresh create at baseline (2048 MiB / 2 vCPUs) -> no advisory.
+case_fresh_create_at_baseline_no_advisory() {
+  setup; make_docker
+  mkdir -p "$MAVERICKS_DOCKER_MACHDIR/container-tools"
+  printf 'memsize = "2048"\nnumvcpus = "2"\n' \
+    > "$MAVERICKS_DOCKER_MACHDIR/container-tools/container-tools.vmx"
+  cat > "$BIN/docker-machine" <<EOF
+#!/bin/sh
+printf '%s\\n' "\$*" >> "$DM_LOG"
+case "\$1" in
+  status) [ -f "$WORK/created" ] && { echo Stopped; exit 0; }; exit 1 ;;
+  create) : > "$WORK/created" ;;
+  start)  : > "$WORK/started" ;;
+  env)    echo 'export DOCKER_HOST="tcp://192.168.237.131:2376"'
+          echo "export DOCKER_CERT_PATH=\"$HOME/x\"" ;;
+  inspect) exit 1 ;;
+esac
+EOF
+  chmod +x "$BIN/docker-machine"
+  sh "$BOOT" || fail "baseline create path should exit 0"
+  grep -q '2 GiB' "$OSA_LOG" && fail "must not emit gui-resources advisory when at or above the 2 GiB baseline"
+  teardown
+}
+
+# Case: fresh create with unknown resource report (no VMX, driver inspect fails) -> no advisory.
+case_fresh_create_unknown_no_advisory() {
+  setup; make_docker
+  # No VMX file; docker-machine inspect returns nothing -> resource_status returns unknown.
+  cat > "$BIN/docker-machine" <<EOF
+#!/bin/sh
+printf '%s\\n' "\$*" >> "$DM_LOG"
+case "\$1" in
+  status)  [ -f "$WORK/created" ] && { echo Stopped; exit 0; }; exit 1 ;;
+  create)  : > "$WORK/created" ;;
+  start)   : > "$WORK/started" ;;
+  env)     echo 'export DOCKER_HOST="tcp://192.168.237.131:2376"'
+           echo "export DOCKER_CERT_PATH=\"$HOME/x\"" ;;
+  inspect) exit 1 ;;
+esac
+EOF
+  chmod +x "$BIN/docker-machine"
+  sh "$BOOT" || fail "fresh-create unknown-resources path should exit 0"
+  grep -q '2 GiB' "$OSA_LOG" && fail "must not emit gui-resources advisory when resource_status is unknown"
+  teardown
+}
+
+# Case: once/day throttle -- pre-stamp today's date so notify returns early.
+case_gui_advisory_throttled() {
+  setup; make_docker
+  mkdir -p "$MAVERICKS_DOCKER_MACHDIR/container-tools"
+  printf 'memsize = "1024"\nnumvcpus = "1"\n' \
+    > "$MAVERICKS_DOCKER_MACHDIR/container-tools/container-tools.vmx"
+  cat > "$BIN/docker-machine" <<EOF
+#!/bin/sh
+printf '%s\\n' "\$*" >> "$DM_LOG"
+case "\$1" in
+  status) [ -f "$WORK/created" ] && { echo Stopped; exit 0; }; exit 1 ;;
+  create) : > "$WORK/created" ;;
+  start)  : > "$WORK/started" ;;
+  env)    echo 'export DOCKER_HOST="tcp://192.168.237.131:2376"'
+          echo "export DOCKER_CERT_PATH=\"$HOME/x\"" ;;
+  inspect) exit 1 ;;
+esac
+EOF
+  chmod +x "$BIN/docker-machine"
+  mkdir -p "$MAVERICKS_DOCKER_STATE_DIR"
+  date '+%Y-%m-%d' > "$MAVERICKS_DOCKER_STATE_DIR/notified-gui-resources"
+  sh "$BOOT" || fail "fresh-create with pre-stamped advisory should exit 0"
+  grep -q '2 GiB' "$OSA_LOG" && fail "gui-resources advisory must be throttled when already notified today"
+  teardown
+}
+
+case_fresh_create_gui_advisory
+case_fresh_create_at_baseline_no_advisory
+case_fresh_create_unknown_no_advisory
+case_gui_advisory_throttled
+
 echo "docker_bootstrap_test: OK"

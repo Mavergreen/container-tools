@@ -28,7 +28,23 @@ If you're using Wowfunhappy's Docker for Mavericks (from which this repo is deri
 - Your `default` VM gets renamed to `container-tools` with its data intact (if it's running, a notification asks you to `docker-machine stop default` first)
 - Your shell profile's `eval "$(docker-machine env ...)"` lines get commented out (with a backup as `<profile>.premigrate`)
 
+## Resource sizing
+
+The tested starting baseline for GUI workloads (Signal, 1Password, etc.) is **2 GiB RAM and two vCPUs**. The first time the Docker VM is created with fewer resources than this, Container Tools notifies you. 4 GiB and two vCPUs offer comfortable headroom.
+
+There is no established host minimum: a lightly loaded Mac can run the VM below this baseline, but host RAM pressure, swap activity, and disk fill rate all affect performance. Watch Activity Monitor if things feel sluggish.
+
+**To adjust resources:**
+
+1. Close any Porthole apps and other running containers.
+2. Stop the Docker VM: Container Tools menu → **Stop Docker VM** (or `docker-machine-ctl stop`).
+3. In VMware Fusion, open the **container-tools** VM settings and change Memory and Processors.
+4. Verify the change: `docker-machine-ctl resource-status` should report the new values (`source=vmx` confirms the VMX file is current).
+5. Start the VM: Container Tools menu → **Start Docker VM**, or wait for the login agent (up to 60 s).
+
+**Container shared memory:** Each container is started with `--shm-size 512m`. This sets an upper bound on `/dev/shm`; it does not reserve RAM ahead of time. (256 MiB was tested as a reference value; there is no 64 MiB production default.) Changing the SHM limit for an existing container requires stopping and recreating it with its named volumes intact — an intentional step, not something that happens automatically. Moving a monitor between displays does not restart apps.
+
 ## Troubleshooting
 
 - Logs: `~/Library/Logs/Mavergreen/container-tools/bootstrap.log`
-- CPU and RAM: Adjust "container-tools" VM settings in VMware Fusion
+- CPU and RAM: adjust "container-tools" VM settings in VMware Fusion (see Resource sizing above)
