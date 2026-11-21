@@ -778,4 +778,95 @@ case_fresh_create_at_baseline_no_advisory
 case_fresh_create_unknown_no_advisory
 case_gui_advisory_throttled
 
+# --- Fix: advisory covers the interactive create path and only fires on a successful create ---
+
+# Case: interactive create assembles a _cmd whose re-exec carries MAVERICKS_DOCKER_JUST_CREATED=1.
+case_interactive_create_cmd_has_marker() {
+  setup; make_docker
+  unset MAVERICKS_DOCKER_NONINTERACTIVE
+  cat > "$BIN/docker-machine" <<EOF
+#!/bin/sh
+printf '%s\\n' "\$*" >> "$DM_LOG"
+case "\$1" in status) exit 1 ;; esac
+EOF
+  chmod +x "$BIN/docker-machine"
+  sh "$BOOT" || fail "interactive create should exit 0"
+  grep -q 'MAVERICKS_DOCKER_JUST_CREATED=1' "$OSA_LOG" \
+    || fail "interactive create _cmd must carry MAVERICKS_DOCKER_JUST_CREATED=1 for the re-exec"
+  teardown
+}
+
+# Case: re-exec with marker set + 1024/1 VMX -> advisory fires.
+case_just_created_marker_low_res_advises() {
+  setup; make_docker
+  mkdir -p "$MAVERICKS_DOCKER_MACHDIR/container-tools"
+  printf 'memsize = "1024"\nnumvcpus = "1"\n' \
+    > "$MAVERICKS_DOCKER_MACHDIR/container-tools/container-tools.vmx"
+  cat > "$BIN/docker-machine" <<EOF
+#!/bin/sh
+printf '%s\\n' "\$*" >> "$DM_LOG"
+case "\$1" in
+  status)  echo Stopped ;;
+  start)   : > "$WORK/started" ;;
+  env)     echo 'export DOCKER_HOST="tcp://192.168.237.131:2376"'
+           echo "export DOCKER_CERT_PATH=\"$HOME/x\"" ;;
+  inspect) exit 1 ;;
+esac
+EOF
+  chmod +x "$BIN/docker-machine"
+  MAVERICKS_DOCKER_JUST_CREATED=1 sh "$BOOT" || fail "re-exec with marker should exit 0"
+  grep -q '2 GiB' "$OSA_LOG" \
+    || fail "expected gui-resources advisory when JUST_CREATED marker is set and VM has 1024 MiB/1 vCPU"
+  teardown
+}
+
+# Case: re-exec with marker set + unknown resource report -> no advisory.
+case_just_created_marker_unknown_no_advice() {
+  setup; make_docker
+  # No VMX, inspect fails -> resource_status returns unknown.
+  cat > "$BIN/docker-machine" <<EOF
+#!/bin/sh
+printf '%s\\n' "\$*" >> "$DM_LOG"
+case "\$1" in
+  status)  echo Stopped ;;
+  start)   : > "$WORK/started" ;;
+  env)     echo 'export DOCKER_HOST="tcp://192.168.237.131:2376"'
+           echo "export DOCKER_CERT_PATH=\"$HOME/x\"" ;;
+  inspect) exit 1 ;;
+esac
+EOF
+  chmod +x "$BIN/docker-machine"
+  MAVERICKS_DOCKER_JUST_CREATED=1 sh "$BOOT" || fail "re-exec marker unknown-resources should exit 0"
+  grep -q '2 GiB' "$OSA_LOG" \
+    && fail "must not emit gui-resources advisory when resource_status is unknown even with JUST_CREATED marker"
+  teardown
+}
+
+# Case: noninteractive create where docker-machine create exits 1 -> no advisory.
+case_noninteractive_failed_create_no_advice() {
+  setup; make_docker
+  mkdir -p "$MAVERICKS_DOCKER_MACHDIR/container-tools"
+  printf 'memsize = "1024"\nnumvcpus = "1"\n' \
+    > "$MAVERICKS_DOCKER_MACHDIR/container-tools/container-tools.vmx"
+  cat > "$BIN/docker-machine" <<EOF
+#!/bin/sh
+printf '%s\\n' "\$*" >> "$DM_LOG"
+case "\$1" in
+  status)  exit 1 ;;
+  create)  exit 1 ;;
+  inspect) exit 1 ;;
+esac
+EOF
+  chmod +x "$BIN/docker-machine"
+  sh "$BOOT" || fail "failed noninteractive create should exit 0"
+  grep -q '2 GiB' "$OSA_LOG" \
+    && fail "must not emit gui-resources advisory when docker-machine create fails"
+  teardown
+}
+
+case_interactive_create_cmd_has_marker
+case_just_created_marker_low_res_advises
+case_just_created_marker_unknown_no_advice
+case_noninteractive_failed_create_no_advice
+
 echo "docker_bootstrap_test: OK"

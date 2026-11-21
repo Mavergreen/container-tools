@@ -33,10 +33,12 @@ create_machine() {
   log "creating machine '$MACHINE'"
   if [ "${MAVERICKS_DOCKER_NONINTERACTIVE:-}" = 1 ]; then
     docker-machine create -d vmwarefusion --vmwarefusion-boot2docker-url "$ISO" "$MACHINE" >>"$LOG" 2>&1
+    _create_exit=$?
     rmdir "$LOCK" 2>/dev/null || true
+    [ "$_create_exit" -eq 0 ] && advise_gui_resources
   else
     notify create "Container Tools for Mavericks" "Creating the Docker VM (one-time, ~1-2 min)..."
-    _cmd="docker-machine create -d vmwarefusion --vmwarefusion-boot2docker-url '$ISO' $MACHINE && rmdir '$LOCK' && '$SELF'"
+    _cmd="docker-machine create -d vmwarefusion --vmwarefusion-boot2docker-url '$ISO' $MACHINE && rmdir '$LOCK' && MAVERICKS_DOCKER_JUST_CREATED=1 '$SELF'"
     osascript -e "tell application \"Terminal\" to do script \"$_cmd\"" >/dev/null 2>&1 || true
     osascript -e 'tell application "Terminal" to activate' >/dev/null 2>&1 || true
   fi
@@ -100,6 +102,11 @@ main() {
     exit 0
   fi
   _status=$(machine_status)
+  # Interactive re-exec after a successful create carries MAVERICKS_DOCKER_JUST_CREATED=1;
+  # advise here so the interactive path gets the same resource nudge as the noninteractive one.
+  if [ "${MAVERICKS_DOCKER_JUST_CREATED:-}" = 1 ] && [ -n "$_status" ]; then
+    advise_gui_resources
+  fi
   if [ -z "$_status" ]; then
     if legacy_default_exists; then
       # A Wowfunhappy-era 'default' VM exists and container-tools does not. Carry the data by
@@ -130,7 +137,6 @@ main() {
     else
       if ! create_machine; then write_state creating; exit 0; fi
       [ "${MAVERICKS_DOCKER_NONINTERACTIVE:-}" = 1 ] || { write_state "$(status_word)"; exit 0; }
-      advise_gui_resources
       _status=$(machine_status)
     fi
   fi
