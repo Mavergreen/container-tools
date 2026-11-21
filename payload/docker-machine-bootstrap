@@ -38,7 +38,7 @@ create_machine() {
     [ "$_create_exit" -eq 0 ] && advise_gui_resources
   else
     notify create "Container Tools for Mavericks" "Creating the Docker VM (one-time, ~1-2 min)..."
-    _cmd="docker-machine create -d vmwarefusion --vmwarefusion-boot2docker-url '$ISO' $MACHINE && rmdir '$LOCK' && MAVERICKS_DOCKER_JUST_CREATED=1 '$SELF'"
+    _cmd="docker-machine create -d vmwarefusion --vmwarefusion-boot2docker-url '$ISO' $MACHINE && rmdir '$LOCK' && env MAVERICKS_DOCKER_JUST_CREATED=1 '$SELF'"
     osascript -e "tell application \"Terminal\" to do script \"$_cmd\"" >/dev/null 2>&1 || true
     osascript -e 'tell application "Terminal" to activate' >/dev/null 2>&1 || true
   fi

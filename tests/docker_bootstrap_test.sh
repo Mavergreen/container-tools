@@ -869,4 +869,101 @@ case_just_created_marker_low_res_advises
 case_just_created_marker_unknown_no_advice
 case_noninteractive_failed_create_no_advice
 
+# --- Case: existing running low-resource VM without JUST_CREATED marker -> no advisory ---
+# A routine login-agent tick on a VM the user has had for a while must not spam the notification.
+case_existing_running_no_advice() {
+  setup; make_docker
+  mkdir -p "$MAVERICKS_DOCKER_MACHDIR/container-tools"
+  printf 'memsize = "1024"\nnumvcpus = "1"\n' \
+    > "$MAVERICKS_DOCKER_MACHDIR/container-tools/container-tools.vmx"
+  cat > "$BIN/docker-machine" <<EOF
+#!/bin/sh
+printf '%s\\n' "\$*" >> "$DM_LOG"
+case "\$1" in
+  status) echo Running ;;
+  env)    echo 'export DOCKER_HOST="tcp://192.168.237.131:2376"'
+          echo "export DOCKER_CERT_PATH=\"$HOME/x\"" ;;
+esac
+EOF
+  chmod +x "$BIN/docker-machine"
+  sh "$BOOT" || fail "existing running VM should exit 0"
+  grep -q '2 GiB' "$OSA_LOG" \
+    && fail "must not emit gui-resources advisory for an existing running VM without JUST_CREATED marker"
+  teardown
+}
+
+# --- Case: existing stopped low-resource VM without JUST_CREATED marker -> no advisory, but starts ---
+case_existing_stopped_no_advice() {
+  setup; make_docker
+  mkdir -p "$MAVERICKS_DOCKER_MACHDIR/container-tools"
+  printf 'memsize = "1024"\nnumvcpus = "1"\n' \
+    > "$MAVERICKS_DOCKER_MACHDIR/container-tools/container-tools.vmx"
+  cat > "$BIN/docker-machine" <<EOF
+#!/bin/sh
+printf '%s\\n' "\$*" >> "$DM_LOG"
+case "\$1" in
+  status) echo Stopped ;;
+  start)  : > "$WORK/started" ;;
+  env)    echo 'export DOCKER_HOST="tcp://192.168.237.131:2376"'
+          echo "export DOCKER_CERT_PATH=\"$HOME/x\"" ;;
+esac
+EOF
+  chmod +x "$BIN/docker-machine"
+  sh "$BOOT" || fail "existing stopped VM should exit 0"
+  grep -q '2 GiB' "$OSA_LOG" \
+    && fail "must not emit gui-resources advisory for an existing stopped VM without JUST_CREATED marker"
+  [ -f "$WORK/started" ] || fail "a stopped VM without user-stopped marker must be started"
+  teardown
+}
+
+# --- Case: create lock held + JUST_CREATED marker -> no advisory, no start/stop/create ---
+case_create_lock_with_marker_no_advice() {
+  setup; make_docker
+  mkdir -p "$MAVERICKS_DOCKER_MACHDIR/container-tools"
+  printf 'memsize = "1024"\nnumvcpus = "1"\n' \
+    > "$MAVERICKS_DOCKER_MACHDIR/container-tools/container-tools.vmx"
+  cat > "$BIN/docker-machine" <<EOF
+#!/bin/sh
+printf '%s\\n' "\$*" >> "$DM_LOG"
+case "\$1" in status) exit 1 ;; esac
+EOF
+  chmod +x "$BIN/docker-machine"
+  mkdir -p "$MAVERICKS_DOCKER_STATE_DIR/creating.lock"
+  MAVERICKS_DOCKER_JUST_CREATED=1 sh "$BOOT" || fail "create lock + JUST_CREATED marker should exit 0"
+  grep -q '2 GiB' "$OSA_LOG" \
+    && fail "must not emit gui-resources advisory when create lock is held"
+  grep -qE 'start|stop|create' "$DM_LOG" \
+    && fail "must not call start/stop/create when create lock is held"
+  teardown
+}
+
+# --- Case: op lock held + JUST_CREATED marker -> no advisory, no start ---
+case_op_lock_with_marker_no_advice() {
+  setup; make_docker
+  mkdir -p "$MAVERICKS_DOCKER_MACHDIR/container-tools"
+  printf 'memsize = "1024"\nnumvcpus = "1"\n' \
+    > "$MAVERICKS_DOCKER_MACHDIR/container-tools/container-tools.vmx"
+  cat > "$BIN/docker-machine" <<EOF
+#!/bin/sh
+printf '%s\\n' "\$*" >> "$DM_LOG"
+case "\$1" in
+  status) echo Stopped ;;
+  start)  : > "$WORK/started" ;;
+esac
+EOF
+  chmod +x "$BIN/docker-machine"
+  mkdir -p "$MAVERICKS_DOCKER_STATE_DIR/op.lock"
+  printf 'stop\n' > "$MAVERICKS_DOCKER_STATE_DIR/op.lock/name"
+  MAVERICKS_DOCKER_JUST_CREATED=1 sh "$BOOT" || fail "op lock + JUST_CREATED marker should exit 0"
+  grep -q '2 GiB' "$OSA_LOG" \
+    && fail "must not emit gui-resources advisory when op lock is held"
+  [ -f "$WORK/started" ] && fail "must not start VM while op lock is held"
+  teardown
+}
+
+case_existing_running_no_advice
+case_existing_stopped_no_advice
+case_create_lock_with_marker_no_advice
+case_op_lock_with_marker_no_advice
+
 echo "docker_bootstrap_test: OK"
