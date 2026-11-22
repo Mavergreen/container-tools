@@ -31,28 +31,42 @@
   [self.watchers start];
 }
 
-- (void)refresh {
+// Power says running, but Docker may not answer yet (finishing-setup) or at all (needs-attention):
+// show the tick's readiness instead, so "Running" is never shown for a Docker nobody can use.
+- (NSString *)shownState {
   NSString *state = [self.controller currentState];
+  if (![state isEqualToString:@"running"]) return state;
+  NSString *r = [self.controller readiness];
+  if ([r isEqualToString:@"finishing-setup"] || [r isEqualToString:@"needs-attention"]) return r;
+  return state;
+}
+static BOOL isUp(NSString *s) {   // the VM is powered on, whatever Docker's readiness
+  return [s isEqualToString:@"running"] || [s isEqualToString:@"finishing-setup"] ||
+         [s isEqualToString:@"needs-attention"];
+}
+
+- (void)refresh {
+  NSString *state = [self shownState];
   if ([state isEqualToString:@"no-fusion"]) [self maybePromptForFusion];
-  self.diskLow = [state isEqualToString:@"running"] && [[self.controller diskStatus] hasSuffix:@" low"];
+  self.diskLow = isUp(state) && [[self.controller diskStatus] hasSuffix:@" low"];
   NSImage *icon = [self iconForState:state];
   icon.template = YES;
   [self.statusItem setImage:icon];
   [self.statusItem setToolTip:[self humanState:state]];
   if (self.watchers)
-    [self.watchers watchVmxPid:([state isEqualToString:@"running"] ? [self.controller vmxPid] : 0)];
+    [self.watchers watchVmxPid:(isUp(state) ? [self.controller vmxPid] : 0)];
   [self rebuildMenuForState:state];
   // Refresh the cached login state off the main thread; rebuild only if it changed.
   [self.controller runVerb:@"login-status" completion:^(NSString *out, int code) {
     BOOL on = [out isEqualToString:@"on"];
-    if (on != self.vmLoginOn) { self.vmLoginOn = on; [self rebuildMenuForState:[self.controller currentState]]; }
+    if (on != self.vmLoginOn) { self.vmLoginOn = on; [self rebuildMenuForState:[self shownState]]; }
   }];
   // Likewise the stale-image state. A package update refreshes the installed boot2docker.iso but the
   // VM keeps booting its own older copy until `docker-machine upgrade`; when stale we offer the roll
   // here (a reliable GUI session) rather than from the updater's flaky post-install dialog.
   [self.controller runVerb:@"image-status" completion:^(NSString *out, int code) {
     BOOL stale = [out isEqualToString:@"stale"];
-    if (stale != self.imageStale) { self.imageStale = stale; [self rebuildMenuForState:[self.controller currentState]]; }
+    if (stale != self.imageStale) { self.imageStale = stale; [self rebuildMenuForState:[self shownState]]; }
   }];
 }
 
@@ -73,6 +87,8 @@
   }
   if ([s isEqualToString:@"running"])   return @"Docker: Running";
   if ([s isEqualToString:@"stopped"])   return @"Docker: Stopped";
+  if ([s isEqualToString:@"finishing-setup"]) return @"Docker: Finishing setup…";
+  if ([s isEqualToString:@"needs-attention"]) return @"Docker: Needs attention";
   if ([s isEqualToString:@"creating"])  return @"Docker: Starting…";
   if ([s isEqualToString:@"absent"])    return @"Docker: Not set up";
   if ([s isEqualToString:@"no-fusion"]) return @"VMware Fusion needed";
@@ -85,8 +101,8 @@
 
   NSMenuItem *header = [m addItemWithTitle:[self humanState:state] action:NULL keyEquivalent:@""];
   header.enabled = NO;
-  if ([state isEqualToString:@"running"] || [state isEqualToString:@"stopped"]) {
-    NSMenuItem *disk = [m addItemWithTitle:[self diskLineForState:state] action:NULL keyEquivalent:@""];
+  if (isUp(state) || [state isEqualToString:@"stopped"]) {
+    NSMenuItem *disk = [m addItemWithTitle:[self diskLineForState:(isUp(state) ? @"running" : state)] action:NULL keyEquivalent:@""];
     disk.enabled = NO;
   }
   [m addItem:[NSMenuItem separatorItem]];
@@ -100,7 +116,9 @@
   } else if ([state isEqualToString:@"absent"] || [state isEqualToString:@"error"]) {
     [m addItemWithTitle:@"Set Up / Repair…" action:@selector(doSetup:) keyEquivalent:@""];
   } else if (![state isEqualToString:@"creating"] && ![state hasPrefix:@"working"]) {
-    if ([state isEqualToString:@"running"]) {
+    if (isUp(state)) {
+      if ([state isEqualToString:@"needs-attention"])
+        [m addItemWithTitle:@"Repair Docker" action:@selector(doRepair:) keyEquivalent:@""];
       [m addItemWithTitle:@"Stop Docker" action:@selector(doStop:) keyEquivalent:@""];
       [m addItemWithTitle:@"Restart Docker" action:@selector(doRestart:) keyEquivalent:@""];
       [m addItemWithTitle:@"Free Up Space…" action:@selector(doFreeSpace:) keyEquivalent:@""];
@@ -116,6 +134,7 @@
 
   [m addItem:[NSMenuItem separatorItem]];
   [m addItemWithTitle:@"Show Log" action:@selector(showLog:) keyEquivalent:@""];
+  [m addItemWithTitle:@"Show Diagnostics…" action:@selector(doDiagnostics:) keyEquivalent:@""];
   [m addItemWithTitle:@"Check for Updates…" action:@selector(checkForUpdates:) keyEquivalent:@""];
 
   [m addItem:[NSMenuItem separatorItem]];
@@ -166,6 +185,11 @@
     else    [self notifyTitle:@"Container Tools" text:@"Freeing up space failed — see Show Log."];
     return;
   }
+  if ([verb isEqualToString:@"repair"]) {
+    if (ok) [self notifyTitle:@"Container Tools" text:@"Docker is ready."];
+    else    [self notifyTitle:@"Container Tools" text:@"Docker still isn't ready — see Show Diagnostics."];
+    return;
+  }
   if ([verb isEqualToString:@"enlarge-disk"]) {
     if (ok) [self notifyTitle:@"Container Tools" text:[self diskLineForState:@"running"]];
     else    [self notifyTitle:@"Container Tools" text:@"Enlarging the VM disk failed — see Show Log."];
@@ -181,6 +205,23 @@
 - (void)doRestart:(id)s { [self runAndRefresh:@"restart"]; }
 - (void)doSetup:(id)s   { [self runAndRefresh:@"setup"]; }
 - (void)doImageUpgrade:(id)s { [self runAndRefresh:@"image-upgrade"]; }
+- (void)doRepair:(id)s { [self runAndRefresh:@"repair"]; }
+
+// What docker-machine-ctl diagnostics says (no key material), in an alert the user can copy from.
+- (void)doDiagnostics:(id)s {
+  [self.controller runVerb:@"diagnostics" completion:^(NSString *out, int code) {
+    NSAlert *a = [[NSAlert alloc] init];
+    a.messageText = @"Container Tools diagnostics";
+    a.informativeText = out.length ? out : @"(No diagnostics; see Show Log.)";
+    [a addButtonWithTitle:@"Copy"];
+    [a addButtonWithTitle:@"Close"];
+    [NSApp activateIgnoringOtherApps:YES];
+    if ([a runModal] == NSAlertFirstButtonReturn) {
+      [[NSPasteboard generalPasteboard] clearContents];
+      [[NSPasteboard generalPasteboard] setString:a.informativeText forType:NSPasteboardTypeString];
+    }
+  }];
+}
 
 // "Disk: 5.2 GB free of 19.1 GB", from the cache the login agent's tick keeps (ctl disk-status).
 - (NSString *)diskLineForState:(NSString *)state {
@@ -290,12 +331,14 @@
 }
 
 - (NSImage *)iconForState:(NSString *)state {
-  BOOL running   = [state isEqualToString:@"running"];
-  BOOL working   = [state hasPrefix:@"working"] || [state isEqualToString:@"creating"];
+  BOOL running   = isUp(state);
+  BOOL working   = [state hasPrefix:@"working"] || [state isEqualToString:@"creating"] ||
+                   [state isEqualToString:@"finishing-setup"];
   BOOL attention = [state isEqualToString:@"no-fusion"] ||
                    [state isEqualToString:@"absent"]    ||
                    [state isEqualToString:@"error"]     ||
                    [state isEqualToString:@"host-disk-full"] ||
+                   [state isEqualToString:@"needs-attention"] ||
                    (running && self.diskLow);
 
   NSImage *img = [NSImage imageWithSize:NSMakeSize(18, 18) flipped:NO

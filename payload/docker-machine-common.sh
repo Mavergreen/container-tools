@@ -134,8 +134,11 @@ op_try_begin() { # name
   write_state "working:$1"
 }
 
-op_end() { # release the lock and settle the state to the real machine status
+op_end() { # release the lock and settle the state (and, for the menu, readiness) to the real machine's
   rm -rf "$OP_LOCK" 2>/dev/null || true
+  # Readiness first: the menu re-reads it when the state file changes, and a stale "ready" from
+  # before a restart (or "needs-attention" from before a repair) would otherwise linger until the tick.
+  if [ "$(machine_status)" = Running ]; then record_readiness "$(api_state 10)"; else record_readiness "$(status_word)"; fi
   write_state "$(status_word)"
 }
 
@@ -344,6 +347,118 @@ enlarge_disk() { # [new GB]
   log "enlarge-disk: disk now $(disk_refresh)"
   op_end
   return $_rc
+}
+
+# Readiness, version 1 (2026-11-22). "running" is the VM's power; ready means Docker itself answers:
+# the managed context, with inherited endpoint/TLS overrides cleared, completes an authenticated API
+# call. Consumers (Porthole's launchers, the op CLI, the menu) ask this instead of trusting power.
+# States: ready | finishing-setup (running, API not answering yet) | needs-attention (TLS the
+# context can't verify: Repair) | any other status_word (stopped, absent, creating, working:<op>,
+# no-fusion, host-disk-full, error). Nothing here repairs: regenerating certs restarts the daemon,
+# so that only happens when someone chooses Repair. The every-install cause of an unverifiable
+# daemon (create aborting before provisioning) is fixed in docker-machine itself (patch 0001).
+READINESS_VERSION=1
+READY_FILE="$STATE_DIR/readiness"   # the tick's latest readiness, for the menu
+API_ERR_FILE="$STATE_DIR/api-error" # the latest API probe's stderr, for diagnostics
+_with_timeout() { # secs cmd...  -- run cmd; kill it after secs (exit 124). No GNU timeout on 10.9.
+  _s=$1; shift
+  "$@" & _p=$!
+  ( sleep "$_s"; kill "$_p" 2>/dev/null ) >/dev/null 2>&1 </dev/null & _k=$!
+  wait "$_p"; _r=$?
+  if kill -0 "$_k" 2>/dev/null; then kill "$_k" 2>/dev/null; else _r=124; fi
+  return $_r
+}
+api_state() { # secs  -- for a running VM: ready | finishing-setup | needs-attention
+  # Into files, not a $(...) pipe: a timed-out process's leftover child would hold a pipe open and
+  # make the caller wait anyway.
+  # Per-call files: the tick, a launcher and the menu's diagnostics can all probe at once.
+  mkdir -p "$STATE_DIR" 2>/dev/null || true
+  _o=$(mktemp "$STATE_DIR/api-out.XXXXXX") || _o=/dev/null
+  _e=$(mktemp "$STATE_DIR/api-err.XXXXXX") || _e=/dev/null
+  (unset DOCKER_HOST DOCKER_TLS_VERIFY DOCKER_CERT_PATH DOCKER_CONTEXT DOCKER_API_VERSION
+   _with_timeout "$1" docker --context "$CONTEXT" info --format '{{.ServerVersion}}') \
+    >"$_o" 2>"$_e" </dev/null
+  _r=$?
+  _v=$(cat "$_o" 2>/dev/null); [ "$_o" = /dev/null ] || rm -f "$_o"
+  [ "$_r" -ne 124 ] || echo "no answer from Docker within $1 s" >> "$_e"
+  if [ "$_r" -eq 0 ] && [ -n "$_v" ]; then _a=ready
+  elif grep -q -e 'unknown authority' -e 'certificate is valid for' "$_e" 2>/dev/null; then _a=needs-attention
+  else _a=finishing-setup; fi
+  [ "$_e" = /dev/null ] || mv -f "$_e" "$API_ERR_FILE" 2>/dev/null || rm -f "$_e"
+  echo "$_a"
+}
+readiness_state() { # [secs]
+  _w=$(status_word)
+  if [ "$_w" = running ]; then api_state "${1:-10}"; else echo "$_w"; fi
+}
+record_readiness() { # state  -- atomically, like write_state
+  mkdir -p "$STATE_DIR" 2>/dev/null || true
+  printf '%s\n' "$1" > "$READY_FILE.tmp" 2>/dev/null && mv -f "$READY_FILE.tmp" "$READY_FILE" 2>/dev/null || true
+}
+# Bring Docker to ready within secs, or say why not (exit 124 when the budget ran out). Starts a
+# stopped VM once, through the same noninteractive bootstrap the login agent runs, unless the user
+# stopped it this boot. It never creates an absent VM (that's `setup`, minutes long, and killing a
+# create partway is exactly what leaves a VM nothing can verify). A start, once begun, is let finish
+# rather than killed, so the budget bounds the waiting, not a start already under way.
+# needs-attention won't fix itself, so it returns at once instead of waiting out the budget.
+ensure_ready() { # secs
+  _end=$(( $(date +%s) + $1 )); _booted=no; _next_sync=0
+  while :; do
+    _w=$(status_word)
+    case "$_w" in
+      absent) echo absent; return 1 ;;
+      stopped)
+        if user_stopped; then echo stopped; return 1; fi
+        if [ "$_booted" = no ]; then
+          _booted=yes
+          MAVERICKS_DOCKER_NONINTERACTIVE=1 docker-machine-bootstrap >>"$LOG" 2>&1 || true
+          continue
+        fi ;;
+      running)
+        if [ "$(date +%s)" -ge "$_next_sync" ]; then sync_context; _next_sync=$(( $(date +%s) + 10 )); fi
+        _left=$(( _end - $(date +%s) )); [ "$_left" -ge 1 ] || _left=1; [ "$_left" -le 10 ] || _left=10
+        _w=$(api_state "$_left")
+        case "$_w" in
+          ready) echo ready; return 0 ;;
+          needs-attention) echo needs-attention; return 1 ;;
+        esac ;;
+      no-fusion|host-disk-full|error) echo "$_w"; return 1 ;;
+    esac
+    [ "$(date +%s)" -lt "$_end" ] || { echo "$_w"; return 124; }
+    sleep 1
+  done
+}
+# Repair, chosen by the user: bring the VM up, re-point the context, and only when the daemon's TLS
+# can't be verified, regenerate the machine's server certificates (`regenerate-certs -f`, the fix
+# measured on the 2026-11-11 repave). Never --client-certs (that rotates the client identity every
+# consumer shares), never removes or recreates the VM or its data. Then waits up to 60 s for ready.
+repair() {
+  op_try_begin repair || { echo "Another Docker operation is running; try again when it finishes."; return 1; }
+  clear_user_stopped
+  [ "$(machine_status)" = Running ] || docker-machine start "$MACHINE" >>"$LOG" 2>&1 || true
+  sync_context
+  if [ "$(api_state 10)" = needs-attention ]; then
+    log "repair: $(tr '\n' ' ' < "$API_ERR_FILE" 2>/dev/null); regenerating $MACHINE's certificates"
+    docker-machine regenerate-certs -f "$MACHINE" >>"$LOG" 2>&1 || true
+    sync_context
+  fi
+  op_end
+  _w=$(ensure_ready 60); _r=$?
+  record_readiness "$_w"; write_state "$(status_word)"   # the menu re-reads readiness on a state change
+  log "repair: $_w"
+  echo "$_w"
+  return $_r
+}
+diagnostics() {
+  echo "readiness: $(readiness_state 10)"
+  echo "power: $(machine_status || true)"
+  echo "status: $(status_word)"
+  echo "context $CONTEXT: $(docker context inspect "$CONTEXT" --format '{{.Endpoints.docker.Host}}' 2>/dev/null)"
+  echo "machine endpoint: $(docker-machine url "$MACHINE" 2>/dev/null)"
+  echo "last API error: $(head -c 400 "$API_ERR_FILE" 2>/dev/null | tr '\n' ' ')"
+  user_stopped && echo "stopped by the user this boot: yes"
+  op_in_progress && echo "operation in progress: $(op_name)"
+  echo "log: $LOG"
 }
 
 write_state() {

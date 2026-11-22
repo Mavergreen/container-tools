@@ -27,6 +27,16 @@ static NSString * const kCtl = @"/usr/local/mavergreen/container-tools/bin/docke
   return s.length ? s : @"unknown";
 }
 
+// Readiness the login agent's tick recorded (docker-machine-ctl readiness): "running" is power, and
+// Docker can be running-but-unusable while setup finishes or its TLS needs Repair.
+- (NSString *)readiness {
+  NSString *path = [[self.stateFilePath stringByDeletingLastPathComponent]
+                    stringByAppendingPathComponent:@"readiness"];
+  NSString *s = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:NULL];
+  s = [s stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+  return s.length ? s : @"unknown";
+}
+
 - (NSString *)runVerbSync:(NSString *)verb out:(int *)codeOut {
   NSTask *t = [[NSTask alloc] init];
   t.launchPath = kCtl;

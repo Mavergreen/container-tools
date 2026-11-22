@@ -13,6 +13,7 @@
 // The VM's disk as the login agent's tick last cached it (`ctl disk-status`): "<total KB> <used KB>
 // <avail KB> ok|low", or "unknown". A file read only, so it never waits on the VM.
 - (NSString *)diskStatus;
+- (NSString *)readiness;   // the tick's latest: ready | finishing-setup | needs-attention | <status>
 
 // Run a ctl verb asynchronously; `completion` is called on the main thread with the
 // verb's stdout (trimmed) and exit code once it finishes.

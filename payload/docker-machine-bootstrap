@@ -138,6 +138,8 @@ main() {
     *" low") notified_today disklow || notify disklow "Container Tools for Mavericks" "$(disk_advice)" ;;
   esac
   neutralize_env_override
+  # For the menu: power alone said "running" while Docker didn't answer (2026-11-11 repave).
+  if [ "$(machine_status)" = Running ]; then record_readiness "$(api_state 10)"; else record_readiness "$(status_word)"; fi
   write_state "$(status_word)"
   exit 0
 }

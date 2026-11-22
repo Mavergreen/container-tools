@@ -311,6 +311,132 @@ case_enlarge_disk_vdm_fails() {
   [ -d "$MAVERICKS_DOCKER_STATE_DIR/op.lock" ] && fail "a failed enlarge-disk must release op.lock"
   teardown
 }
+# Readiness (2026-11-22): "running" is power, not Docker. Ready means the managed context answers an
+# authenticated API call. $WORK/vmstate is the VM's power; $WORK/api is how `docker info` behaves:
+# ok | tls (unknown authority) | down | hang. The bootstrap stub stands in for the noninteractive
+# setup path that ensure-ready runs on a stopped VM.
+stub_ready() { # $1 = vmstate, $2 = api
+  echo "$1" > "$WORK/vmstate"; echo "$2" > "$WORK/api"
+  cat > "$BIN/docker-machine" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >> "$DM_LOG"
+case "\$1" in
+  status) cat "$WORK/vmstate" ;;
+  regenerate-certs) echo ok > "$WORK/api" ;;
+esac
+exit 0
+EOF
+  cat > "$BIN/docker" <<EOF
+#!/bin/sh
+printf '%s DOCKER_HOST=%s\n' "\$*" "\${DOCKER_HOST:-}" >> "$DOCKER_LOG"
+case "\$*" in
+  *" info "*|*" info") case "\$(cat "$WORK/api")" in
+      ok)   echo 23.0.6 ;;
+      tls)  echo 'tls: failed to verify certificate: x509: certificate signed by unknown authority' >&2; exit 1 ;;
+      down) echo 'dial tcp 192.168.237.137:2376: connect: host is down' >&2; exit 1 ;;
+      hang) sleep 30 ;;
+    esac ;;
+esac
+exit 0
+EOF
+  cat > "$BIN/docker-machine-bootstrap" <<EOF
+#!/bin/sh
+echo bootstrap >> "$DM_LOG"
+echo Running > "$WORK/vmstate"; echo ok > "$WORK/api"
+EOF
+  chmod +x "$BIN/docker-machine" "$BIN/docker" "$BIN/docker-machine-bootstrap"
+}
+case_readiness() {
+  setup
+  [ "$(sh "$CTL" readiness-version)" = 1 ] || fail "readiness-version must print 1"
+  stub_ready Running ok
+  out=$(DOCKER_HOST=tcp://elsewhere:2376 sh "$CTL" readiness) || fail "running + API ok must be ready, exit 0 (got: $out)"
+  [ "$out" = ready ] || fail "readiness prints ready (got: $out)"
+  grep -q -- '--context mavericks info' "$DOCKER_LOG" || fail "readiness must ask the managed context explicitly"
+  grep -q 'DOCKER_HOST=tcp' "$DOCKER_LOG" && fail "readiness must clear inherited DOCKER_HOST, so only the managed context can pass"
+  echo tls > "$WORK/api"
+  out=$(sh "$CTL" readiness) && fail "unknown authority is not ready"
+  [ "$out" = needs-attention ] || fail "unknown authority -> needs-attention (got: $out)"
+  echo down > "$WORK/api"
+  [ "$(sh "$CTL" readiness)" = finishing-setup ] || fail "running but the API not answering yet -> finishing-setup"
+  echo Stopped > "$WORK/vmstate"
+  [ "$(sh "$CTL" readiness)" = stopped ] || fail "a stopped VM -> stopped"
+  echo Running > "$WORK/vmstate"; echo ok > "$WORK/api"; mkdir -p "$MAVERICKS_DOCKER_STATE_DIR/op.lock"
+  echo restart > "$MAVERICKS_DOCKER_STATE_DIR/op.lock/name"; echo $$ > "$MAVERICKS_DOCKER_STATE_DIR/op.lock/pid"
+  [ "$(sh "$CTL" readiness)" = working:restart ] || fail "an op in progress -> working:<op>"
+  rm -rf "$MAVERICKS_DOCKER_STATE_DIR/op.lock"
+  rc=0; sh "$CTL" readiness --wait-seconds x >/dev/null 2>&1 || rc=$?
+  [ "$rc" -eq 2 ] || fail "a bad --wait-seconds exits 2 (got $rc)"
+  teardown
+}
+case_readiness_hang_is_bounded() {
+  setup; stub_ready Running hang
+  t0=$(date +%s)
+  out=$(sh "$CTL" readiness --wait-seconds 2) && fail "a hung API is not ready"
+  [ $(( $(date +%s) - t0 )) -le 6 ] || fail "readiness must give up on a hung API within its budget"
+  [ "$out" = finishing-setup ] || fail "a hung API -> finishing-setup (got: $out)"
+  teardown
+}
+case_ensure_ready() {
+  setup; stub_ready Stopped down
+  out=$(sh "$CTL" ensure-ready --wait-seconds 5) || fail "ensure-ready must bring a stopped VM to ready (got: $out)"
+  [ "$out" = ready ] || fail "ensure-ready prints ready (got: $out)"
+  grep -q '^bootstrap' "$DM_LOG" || fail "ensure-ready starts a stopped VM through the noninteractive bootstrap"
+  teardown
+  setup; stub_ready Stopped down; MAVERICKS_DOCKER_BOOT_ID=b1 sh "$CTL" stop >/dev/null; : > "$DM_LOG"
+  out=$(MAVERICKS_DOCKER_BOOT_ID=b1 sh "$CTL" ensure-ready --wait-seconds 3) && fail "the user's Stop must be respected"
+  [ "$out" = stopped ] || fail "user-stopped -> stopped (got: $out)"
+  grep -q '^bootstrap\|^start' "$DM_LOG" && fail "ensure-ready must not start a VM the user stopped this boot"
+  teardown
+  setup; stub_ready Running ok; echo NotExist > "$WORK/vmstate"
+  printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "%s"; exit 1\n' "$DM_LOG" > "$BIN/docker-machine"; chmod +x "$BIN/docker-machine"
+  out=$(sh "$CTL" ensure-ready --wait-seconds 3) && fail "an absent VM is not ready"
+  [ "$out" = absent ] || fail "absent -> absent, for the caller to point at setup (got: $out)"
+  grep -q '^bootstrap' "$DM_LOG" && fail "ensure-ready must never create a VM: that's setup"
+  teardown
+  setup; stub_ready Running down
+  t0=$(date +%s)
+  rc=0; out=$(sh "$CTL" ensure-ready --wait-seconds 3) || rc=$?
+  [ "$rc" -eq 124 ] || fail "never ready within the budget exits 124 (got $rc)"
+  [ "$out" = finishing-setup ] || fail "and prints the last state (got: $out)"
+  [ $(( $(date +%s) - t0 )) -le 8 ] || fail "ensure-ready must respect its budget"
+  teardown
+  setup; stub_ready Running tls
+  t0=$(date +%s)
+  out=$(sh "$CTL" ensure-ready --wait-seconds 30) && fail "unknown authority is not ready"
+  [ "$out" = needs-attention ] || fail "unknown authority -> needs-attention (got: $out)"
+  [ $(( $(date +%s) - t0 )) -le 5 ] || fail "needs-attention won't fix itself: report it at once, don't wait out the budget"
+  grep -q regenerate-certs "$DM_LOG" && fail "ensure-ready must never regenerate certs by itself (that restarts the daemon): Repair is explicit"
+  teardown
+}
+case_repair() {
+  setup; stub_ready Running tls
+  out=$(sh "$CTL" repair) || fail "repair must fix unknown authority (got: $out)"
+  [ "$out" = ready ] || fail "repair prints the resulting state (got: $out)"
+  grep -q '^regenerate-certs -f container-tools' "$DM_LOG" || fail "repair regenerates the machine's server certs"
+  grep -q -- '--client-certs' "$DM_LOG" && fail "repair must never rotate the shared client identity"
+  grep -E -q '^(rm|create|kill)' "$DM_LOG" && fail "repair must never remove or recreate the VM"
+  [ -d "$MAVERICKS_DOCKER_STATE_DIR/op.lock" ] && fail "repair must release op.lock"
+  [ "$(cat "$MAVERICKS_DOCKER_STATE_DIR/readiness")" = ready ] || fail "repair must record the new readiness for the menu (stale needs-attention otherwise)"
+  teardown
+  setup; stub_ready Running ok
+  sh "$CTL" repair >/dev/null || fail "repair on a ready VM is fine"
+  grep -q regenerate-certs "$DM_LOG" && fail "repair must not regenerate certs for a ready VM"
+  teardown
+  setup; stub_ready Running tls; mkdir -p "$MAVERICKS_DOCKER_STATE_DIR/op.lock"
+  echo image-upgrade > "$MAVERICKS_DOCKER_STATE_DIR/op.lock/name"; echo $$ > "$MAVERICKS_DOCKER_STATE_DIR/op.lock/pid"
+  sh "$CTL" repair >/dev/null 2>&1 && fail "repair must refuse while another op runs"
+  grep -q regenerate-certs "$DM_LOG" && fail "repair must not touch certs under another op"
+  teardown
+}
+case_diagnostics() {
+  setup; stub_ready Running tls
+  out=$(sh "$CTL" diagnostics) || fail "diagnostics exit 0"
+  case "$out" in *"readiness: needs-attention"*"power: Running"*) ;; *) fail "diagnostics names readiness and power (got: $out)" ;; esac
+  case "$out" in *"unknown authority"*) ;; *) fail "diagnostics shows the API error (got: $out)" ;; esac
+  case "$out" in *"BEGIN"*|*"PRIVATE"*) fail "diagnostics must never print key material" ;; esac
+  teardown
+}
 case_stop_marks_user_stopped() {
   setup; stub_dm Stopped
   MAVERICKS_DOCKER_BOOT_ID=boot-A sh "$CTL" stop >/dev/null || fail "stop exit 0"
@@ -554,6 +680,11 @@ case_enlarge_disk_plan
 case_enlarge_disk
 case_enlarge_disk_refusals
 case_enlarge_disk_vdm_fails
+case_readiness
+case_readiness_hang_is_bounded
+case_ensure_ready
+case_repair
+case_diagnostics
 case_image
 case_image_upgrade_fails
 case_start_announces

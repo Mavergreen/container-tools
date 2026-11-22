@@ -192,6 +192,33 @@ case_tick_warns_low_disk() {
 case_tick_refreshes_disk
 case_tick_warns_low_disk
 
+# The tick records readiness for the menu (running is power; the menu should say "Finishing setup" or
+# "Needs attention" while Docker itself doesn't answer).
+case_tick_records_readiness() {
+  setup; stub_running_vm_df '/dev/sda1 18668944 12460804 5219012 70% /mnt/sda1'
+  cat > "$BIN/docker" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >> "$DOCKER_LOG"
+case "\$*" in *" info"*) echo 23.0.6 ;; *"context inspect"*) exit 1 ;; esac
+exit 0
+EOF
+  chmod +x "$BIN/docker"
+  sh "$BOOT" || fail "tick should exit 0"
+  [ "$(cat "$MAVERICKS_DOCKER_STATE_DIR/readiness" 2>/dev/null)" = ready ] || fail "an answering API: the tick records ready (got: $(cat "$MAVERICKS_DOCKER_STATE_DIR/readiness" 2>/dev/null))"
+  cat > "$BIN/docker" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >> "$DOCKER_LOG"
+case "\$*" in *" info"*) echo 'x509: certificate signed by unknown authority' >&2; exit 1 ;; *"context inspect"*) exit 1 ;; esac
+exit 0
+EOF
+  chmod +x "$BIN/docker"
+  sh "$BOOT" || fail "tick should exit 0"
+  [ "$(cat "$MAVERICKS_DOCKER_STATE_DIR/readiness")" = needs-attention ] || fail "unknown authority: the tick records needs-attention"
+  grep -q regenerate-certs "$DM_LOG" && fail "the tick must never regenerate certs by itself"
+  teardown
+}
+case_tick_records_readiness
+
 # A low disk is first helped automatically, with only what is safe unattended: dangling images (no
 # -a: never a tagged image, which may be impossible to rebuild) and build cache. Never containers or
 # volumes. At most once every 6 hours, under op.lock, and the notification only if still low.
