@@ -19,7 +19,10 @@ else
 fi
 sy="$SHIPYARD_SCRIPTS/.."
 CL="$(sh "$ROOT/cmake/fetch-clang22.sh")"
-OTOOL="${OTOOL:-$CL/bin/llvm-otool}"
+# The build's compat guard and the checks below read Mach-O; off macOS only clang22's llvm tools can.
+LIPO="${LIPO:-$CL/bin/llvm-lipo}"; OTOOL="${OTOOL:-$CL/bin/llvm-otool}"
+NM="${NM:-$CL/bin/llvm-nm}"; STRINGS="${STRINGS:-$CL/bin/llvm-strings}"
+export LIPO OTOOL NM STRINGS
 for app in updater menubar; do
   bld="$OUT/container-tools-$app"
   rm -rf "$bld"
