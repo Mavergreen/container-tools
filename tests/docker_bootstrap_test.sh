@@ -241,7 +241,8 @@ case_tick_auto_free_still_low_notifies() {
   setup; stub_vm_pruning stays-low
   sh "$BOOT" || fail "tick should exit 0"
   [ "$(PRUNES)" -eq 2 ] || fail "a low disk must be pruned once (got $(PRUNES) prunes)"
-  grep -q 'almost full' "$OSA_LOG" || fail "still low after auto-free: notify, pointing at Free Up Space"
+  grep -q 'almost full' "$OSA_LOG" || fail "still low after auto-free: notify"
+  grep -q 'system df' "$DOCKER_LOG" || fail "still low after auto-free: the notification says what fills the disk (disk_advice)"
   teardown
 }
 case_tick_auto_free_rate_limited() {
@@ -250,6 +251,7 @@ case_tick_auto_free_rate_limited() {
   : > "$DOCKER_LOG"
   sh "$BOOT" || fail "second tick should exit 0"
   [ "$(PRUNES)" -eq 0 ] || fail "auto-free must not run again within 6 hours"
+  grep -q 'system df' "$DOCKER_LOG" && fail "once today's low-disk notification has fired, the tick must not build its advice again"
   echo $(( $(date +%s) - 6 * 3600 - 1 )) > "$MAVERICKS_DOCKER_STATE_DIR/auto-free-last"
   sh "$BOOT" || fail "third tick should exit 0"
   [ "$(PRUNES)" -eq 2 ] || fail "auto-free must run again once 6 hours have passed"

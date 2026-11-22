@@ -37,11 +37,14 @@ log() {
   echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG" 2>/dev/null || true
 }
 
+notified_today() { # key  -- true when notify KEY already fired today, so its message needn't be built
+  [ "$(cat "$STATE_DIR/notified-$1" 2>/dev/null)" = "$(date '+%Y-%m-%d')" ]
+}
+
 notify() { # key title message  (throttled once/day per key)
   mkdir -p "$STATE_DIR" 2>/dev/null || true
-  _stamp="$STATE_DIR/notified-$1"; _today=$(date '+%Y-%m-%d')
-  [ -f "$_stamp" ] && [ "$(cat "$_stamp" 2>/dev/null)" = "$_today" ] && return 0
-  echo "$_today" > "$_stamp" 2>/dev/null || true
+  notified_today "$1" && return 0
+  date '+%Y-%m-%d' > "$STATE_DIR/notified-$1" 2>/dev/null || true
   osascript -e "display notification \"$3\" with title \"$2\"" >/dev/null 2>&1 || true
 }
 
@@ -214,6 +217,47 @@ auto_free_space() {
   log "auto-free: disk now $(disk_refresh)"
   op_end
   return $_rc
+}
+
+# When the disk is still low after auto-free, say what fills it and the action that fits, instead of
+# always pointing at Free Up Space… (2026-11-20: volumes held 25 GB and Free Up Space… could free
+# 0.7 GB). Weighs what can be freed (unused images, stopped containers), what the user's apps keep
+# (volumes, never offered for deletion), and the largest container log (json-file logs have no cap
+# by default). Below 1 GB everywhere, nothing large is left to free: suggest a bigger disk.
+# Reports only. Docker prints sizes in decimal units (go-units: B kB MB GB TB).
+_DISK_BYTES='function bytes(s,  n, u) { sub(/ .*/, "", s); n = s + 0; u = s; sub(/^[0-9.]+/, "", u)
+  return n * (u == "TB" ? 1e12 : u == "GB" ? 1e9 : u == "MB" ? 1e6 : (u == "kB" || u == "KB") ? 1e3 : 1) }'
+_gb() { awk -v b="$1" 'BEGIN { printf "%.1f GB", b / 1e9 }'; }
+disk_advice() {
+  _df=$(docker --context "$CONTEXT" system df --format '{{.Type}}|{{.Size}}|{{.Reclaimable}}' 2>/dev/null)
+  _img=$(printf '%s\n' "$_df" | awk -F'|' "$_DISK_BYTES"' $1 == "Images" { printf "%.0f", bytes($3) }')
+  _ctr=$(printf '%s\n' "$_df" | awk -F'|' "$_DISK_BYTES"' $1 == "Containers" { printf "%.0f", bytes($3) }')
+  _vol=$(printf '%s\n' "$_df" | awk -F'|' "$_DISK_BYTES"' $1 == "Local Volumes" { printf "%.0f", bytes($2) }')
+  _bigvol=$(docker --context "$CONTEXT" system df -v 2>/dev/null | awk "$_DISK_BYTES"'
+    /^Local Volumes space usage:/ { v = 1; next }
+    v && /^VOLUME NAME/ { next }
+    v && NF == 0 { if (seen) exit; next }
+    v { seen = 1; b = bytes($NF); if (b > max) { max = b; name = $1 } }
+    END { print name }')
+  _log=$(docker-machine ssh "$MACHINE" "sudo sh -c 'du -sk /var/lib/docker/containers/*/*-json.log'" 2>/dev/null \
+    | sort -rn | head -1)
+  _logkb=${_log%%[!0-9]*}
+  _logb=$(( ${_logkb:-0} * 1024 ))   # empty when no container has a log: never $(( * 1024 )), fatal to sh
+  _logid=$(basename "$(dirname "${_log#*[ 	]}")" 2>/dev/null)
+  _logname=$(docker --context "$CONTEXT" ps -a --no-trunc --format '{{.ID}} {{.Names}}' 2>/dev/null \
+    | awk -v id="$_logid" '$1 == id { print $2 }')
+  _pre="The Docker VM's disk is almost full:"
+  printf '%s\n' "img ${_img:-0}" "ctr ${_ctr:-0}" "vol ${_vol:-0}" "log ${_logb:-0}" | sort -k2 -rn | head -1 | {
+    read -r _what _b
+    if [ "${_b:-0}" -lt 1000000000 ]; then
+      echo "$_pre nothing large is left to free. Choose Enlarge VM Disk… in the Container Tools menu."
+    else case "$_what" in
+      img) echo "$_pre unused images hold $(_gb "$_b"). Choose Free Up Space… in the Container Tools menu." ;;
+      ctr) echo "$_pre stopped containers hold $(_gb "$_b"). See them with: docker ps -a -f status=exited" ;;
+      vol) echo "$_pre volumes hold $(_gb "$_b"), the largest ${_bigvol:-unknown}. Clean up inside the app that uses it, or choose Enlarge VM Disk… in the Container Tools menu." ;;
+      log) echo "$_pre the log of container ${_logname:-$_logid} is $(_gb "$_b"). Recreating the container clears it." ;;
+    esac; fi
+  }
 }
 
 write_state() {

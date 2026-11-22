@@ -156,6 +156,58 @@ case_auto_free_waits_for_op() {
   [ "$(cat "$MAVERICKS_DOCKER_STATE_DIR/op.lock/name")" = image-upgrade ] || fail "auto-free must leave another op's lock alone"
   teardown
 }
+# disk-advice: when the disk is still low after auto-free, name what fills it and the action that
+# fits. Reads docker's own accounting plus the containers' json logs; reports only, never deletes.
+# $1..$4 = Images reclaimable, Containers reclaimable, Local Volumes size, the largest log's KB.
+stub_advice() {
+  cat > "$BIN/docker" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >> "$DOCKER_LOG"
+case "\$*" in
+  *"system df -v"*) printf 'Local Volumes space usage:\n\nVOLUME NAME               LINKS     SIZE\nsmall-data   1   24.3MB\nsignal-desktop-gui-data   1   $3\n\nBuild cache usage: 0B\n' ;;
+  *"system df"*) printf 'Images|5.688GB|$1 (4%%)\nContainers|200.5MB|$2 (96%%)\nLocal Volumes|$3|396B (0%%)\nBuild Cache|0B|0B\n' ;;
+  *"ps -a"*) printf '64e93d836de8f14ab 1password-gui\nf92f352dec63ee5d4 signal-desktop-gui\n' ;;
+esac
+exit 0
+EOF
+  chmod +x "$BIN/docker"
+  cat > "$BIN/docker-machine" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >> "$DM_LOG"
+case "\$1" in
+  status) echo Running ;;
+  ssh) case "\$*" in
+         *json.log*) printf '%s\t/var/lib/docker/containers/f92f352dec63ee5d4/f92f352dec63ee5d4-json.log\n12\t/var/lib/docker/containers/64e93d836de8f14ab/64e93d836de8f14ab-json.log\n' "$4" ;;
+       esac ;;
+esac
+exit 0
+EOF
+  chmod +x "$BIN/docker-machine"
+}
+case_disk_advice() {
+  setup; stub_advice 3.2GB 194MB 1.9GB 40
+  out=$(sh "$CTL" disk-advice) || fail "disk-advice exit 0"
+  case "$out" in *"unused images hold 3.2 GB"*"Free Up Space"*) ;; *) fail "images biggest: point at Free Up Space (got: $out)" ;; esac
+  teardown
+  setup; stub_advice 274MB 2.5GB 1.9GB 40
+  out=$(sh "$CTL" disk-advice)
+  case "$out" in *"stopped containers hold 2.5 GB"*) ;; *) fail "stopped containers biggest: say so (got: $out)" ;; esac
+  teardown
+  setup; stub_advice 274MB 194MB 12.4GB 40
+  out=$(sh "$CTL" disk-advice)
+  case "$out" in *"volumes hold 12.4 GB"*"signal-desktop-gui-data"*"Enlarge VM Disk"*) ;; *) fail "volumes biggest: name the largest, never offer to delete it (got: $out)" ;; esac
+  case "$out" in *"Free Up Space"*|*[Rr]emove*|*[Dd]elete*) fail "never suggest deleting a volume (got: $out)" ;; esac
+  teardown
+  setup; stub_advice 274MB 194MB 1.9GB 3400000
+  out=$(sh "$CTL" disk-advice)
+  case "$out" in *"log of container signal-desktop-gui is 3.5 GB"*) ;; *) fail "a huge log: name its container (got: $out)" ;; esac
+  teardown
+  setup; stub_advice 274MB 194MB 600MB 40
+  out=$(sh "$CTL" disk-advice)
+  case "$out" in *"Enlarge VM Disk"*) ;; *) fail "nothing large to free: point at Enlarge VM Disk (got: $out)" ;; esac
+  grep -E -q 'prune|rm |volume rm' "$DOCKER_LOG" && fail "disk-advice must only report"
+  teardown
+}
 case_stop_marks_user_stopped() {
   setup; stub_dm Stopped
   MAVERICKS_DOCKER_BOOT_ID=boot-A sh "$CTL" stop >/dev/null || fail "stop exit 0"
@@ -394,6 +446,7 @@ case_reclaimable
 case_free_space
 case_auto_free
 case_auto_free_waits_for_op
+case_disk_advice
 case_image
 case_image_upgrade_fails
 case_start_announces
