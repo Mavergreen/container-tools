@@ -36,10 +36,11 @@ mkdir -p "$T/repo/cmake" "$T/repo/components/docker-cli/patches"
 cp "$ROOT"/cmake/build_*.sh "$T/repo/cmake/"
 
 fail=0
+printf '#!/bin/sh\nexit 0\n' > "$T/apply"   # apply_patches.sh stand-in for build_docker_machine.sh
 for b in docker_cli:v29.9.3 docker_compose:v5.8.0 docker_machine:"$T/gopath" lazydocker:v0.24.1; do
   name=${b%%:*}; arg4=${b#*:}
   log="$T/$name.log"; : > "$log"
-  if ! GO_STUB_LOG="$log" GOTOOLCHAIN=auto sh "$T/repo/cmake/build_$name.sh" "$T/src" "$T/out-$name" "$T/go" "$arg4" >/dev/null 2>&1; then
+  if ! GO_STUB_LOG="$log" GOTOOLCHAIN=auto sh "$T/repo/cmake/build_$name.sh" "$T/src" "$T/out-$name" "$T/go" "$arg4" "$T/apply" >/dev/null 2>&1; then
     echo "go_toolchain_pinned_test: build_$name.sh failed against the stub go" >&2; fail=1; continue
   fi
   if grep -v ' local$' "$log" | grep -q .; then

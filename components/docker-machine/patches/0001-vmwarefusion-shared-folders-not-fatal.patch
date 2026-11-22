@@ -1,0 +1,43 @@
+Subject: vmwarefusion: carry on when Fusion cannot mount shared folders in the guest
+
+Fusion 8.5's vmrun enableSharedFolders and addSharedFolder each configure the
+share on the host, then ask the guest tools to mount the kernel vmhgfs
+filesystem, which boot2docker's 5.15 kernel lacks: both exit 255, so every create
+aborted before provisioning (a Running VM with no Docker TLS certificates).
+The driver's own vmhgfs-fuse mount right after works, even on a fresh boot, so
+warn and carry on. Measured 2026-11-22 (container-tools readiness evidence).
+
+--- a/drivers/vmwarefusion/fusion_darwin.go
++++ b/drivers/vmwarefusion/fusion_darwin.go
+@@ -380,10 +380,16 @@
+ 		return err
+ 	}
+ 
+-	// Enable Shared Folders
++	// Enable Shared Folders. Fusion 8.5 enables them on the host side (isolation.tools.hgfs.disable),
++	// then asks the guest's tools to mount the kernel vmhgfs filesystem, which a 5.15 boot2docker
++	// kernel lacks: vmrun exits 255 ("error mounting the Shared Folders file system inside the
++	// guest"). Returning that aborted create before provisioning, leaving a Running VM with no Docker
++	// TLS certificates on every create. The guest-side mount isn't needed: the share is mounted
++	// below with vmhgfs-fuse (measured to work on a fresh boot), and boot2docker mounts it itself at
++	// every boot. So carry on.
+ 	_, _, err = vmrun("-gu", B2DUser, "-gp", B2DPass, "enableSharedFolders", d.vmxPath())
+ 	if err != nil {
+-		return err
++		log.Warnf("vmrun enableSharedFolders failed (%v); mounting the share with vmhgfs-fuse instead", err)
+ 	}
+ 
+ 	var shareName, shareDir string // TODO configurable at some point
+@@ -399,9 +405,11 @@
+ 			return err
+ 		} else if !os.IsNotExist(err) {
+ 			// add shared folder, create mountpoint and mount it.
++			// Same as enableSharedFolders above: the share is added to the vmx, then the guest-side
++			// mount fails with 255. The mount command below is what mounts it.
+ 			_, _, err = vmrun("-gu", B2DUser, "-gp", B2DPass, "addSharedFolder", d.vmxPath(), shareName, shareDir)
+ 			if err != nil {
+-				return err
++				log.Warnf("vmrun addSharedFolder failed (%v); mounting the share with vmhgfs-fuse instead", err)
+ 			}
+ 			command := "([ ! -d " + shareDir + " ]&& sudo mkdir " + shareDir + "; sudo mount --bind /mnt/hgfs/" + shareDir + " " + shareDir + ") || ([ -f /usr/local/bin/vmhgfs-fuse ]&& sudo /usr/local/bin/vmhgfs-fuse -o allow_other .host:/" + shareName + " " + shareDir + ") || sudo mount -t vmhgfs -o uid=$(id -u),gid=$(id -g) .host:/" + shareName + " " + shareDir
+ 			_, _, err = vmrun("-gu", B2DUser, "-gp", B2DPass, "runScriptInGuest", d.vmxPath(), "/bin/sh", command)

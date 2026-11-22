@@ -20,6 +20,7 @@ Releases through `20260727-mavericks.37` used the port scheme. Sparkle orders `2
 | docker CLI patch overlay | `components/docker-cli/patches/*.patch` | n/a (this repo's own fix) | **is** an ingredient — it is applied into the built binary, so a change rebuilds it |
 | docker Compose | `components/docker-compose/version` | ✅ `git-refs` + `currentDigest` | same |
 | docker Machine | `components/docker-machine/version` | ✅ `git-refs` + `currentDigest` | same |
+| docker Machine patch overlay | `components/docker-machine/patches/*.patch` | n/a (this repo's own fix) | **is** an ingredient: applied into the built binary with shipyard's `apply_patches.sh` (0001 lets `create` survive Fusion 8.5's guest-side shared-folder mount failing on boot2docker's 5.15 kernel) |
 | lazydocker | `components/lazydocker/version` | ✅ `git-refs` + `currentDigest` | same |
 | boot2docker source | `components/boot2docker/version` | ✅ `git-refs` + `currentDigest` | same; the iso build re-clones (commit-digest-verified) + rebuilds |
 | boot2docker build base (Debian) | `components/boot2docker/version` (`BASE=debian:<N>-slim@sha256:…`) | ✅ `docker` + `currentDigest` (digest refreshes and the next Debian major) | same; replaces upstream's hard-coded `FROM` (`cmake/rebase_dockerfile.sh`), whose bullseye aged out of security support and broke `apt-get update` |
@@ -37,8 +38,9 @@ there moves `UPSTREAM_VERSION` to the day of the change, and you cut the release
 `cmake/build_boot2docker.sh` applies every `components/boot2docker/patches/*.patch` into the iso build,
 and `cmake/build_docker_cli.sh` applies every `components/docker-cli/patches/*.patch` into the docker
 CLI build (adding `/usr/local/mavergreen/container-tools/lib/docker/cli-plugins` to its plugin search
-list), so either patch overlay changes the shipped product exactly as a version bump would. The caller
-watches `components/**`, which covers both — and generated release notes describe a patch by its
+list), and `cmake/build_docker_machine.sh` applies every `components/docker-machine/patches/*.patch`
+into docker-machine, so each patch overlay changes the shipped product exactly as a version bump would. The caller
+watches `components/**`, which covers all three — and generated release notes describe a patch by its
 subject line and line delta rather than a meaningless byte count.
 
 ## Acceptance is manual for the iso

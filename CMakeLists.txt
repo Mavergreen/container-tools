@@ -190,6 +190,7 @@ ExternalProject_Add(docker_machine
   CONFIGURE_COMMAND ""
   BUILD_COMMAND    sh "${CMAKE_SOURCE_DIR}/cmake/build_docker_machine.sh"
                      <SOURCE_DIR> "${DM_OUT}" "${MAVERICKS_DOCKER_GO}" "${DM_GOPATH}"
+                     "${MavericksShipyard_SCRIPTS}/apply_patches.sh"
   INSTALL_COMMAND  ""
   BUILD_BYPRODUCTS "${MACHINE_BIN}"
 )
@@ -281,7 +282,7 @@ add_test(NAME sdk_coverage_test
   COMMAND sh "${CMAKE_SOURCE_DIR}/tests/sdk_coverage_test.sh" "${DOCKER_BIN}"
              "${MavericksShipyard_SCRIPTS}/fetch_sdk.sh")
 # Self-contained (no built binary needed).
-foreach(t scaffold_test renovate_test docker_compose_test go_toolchain_pinned_test docker_bootstrap_test docker_common_test docker_ctl_test docker_migrate_test docker_sync_image_test docker_menubar_test docker_plugin_dir_test postinstall_hook_test)
+foreach(t scaffold_test renovate_test docker_compose_test go_toolchain_pinned_test docker_machine_patches_test docker_bootstrap_test docker_common_test docker_ctl_test docker_migrate_test docker_sync_image_test docker_menubar_test docker_plugin_dir_test postinstall_hook_test)
   add_test(NAME ${t} COMMAND sh "${CMAKE_SOURCE_DIR}/tests/${t}.sh")
 endforeach()
 add_test(NAME fetch_sdk_test
