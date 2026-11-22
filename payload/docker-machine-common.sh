@@ -146,11 +146,22 @@ vmx_pid() { pgrep -f "machines/$MACHINE/.*\.vmx" 2>/dev/null | head -1 || true; 
 # docker-machine's status flaps and every docker-machine command waits, so this is the one thing
 # worth telling the user. "Still asking" = the vmx is up and the log was written in the last 10s.
 host_disk_full() {
+  # "Still asking" is judged by the newest question's own timestamp, never the log's mtime: on
+  # 2026-11-22 a question answered at 11:42 was still among the last 12 lines at 12:08, and an
+  # unrelated line had just freshened the file, so the running VM read as paused. VMware stamps local
+  # time; both sides are turned into seconds by plain awk arithmetic (no BSD/GNU date parsing).
   _vl="$MACHDIR/$MACHINE/vmware.log"
   [ -f "$_vl" ] && [ -n "$(vmx_pid)" ] || return 1
-  _mt=$(stat -f %m "$_vl" 2>/dev/null) || return 1
-  [ $(( $(date +%s) - _mt )) -le 10 ] || return 1
-  tail -n 12 "$_vl" 2>/dev/null | grep -Eqi 'nospace|outofspace'
+  _ts=$(tail -n 12 "$_vl" 2>/dev/null | grep -Ei 'nospace|outofspace' | tail -1 | cut -c1-19)
+  [ -n "$_ts" ] || return 1
+  printf '%s %s\n' "$_ts" "$(date '+%Y-%m-%dT%H:%M:%S')" | awk '
+    function secs(t,  y, m, d) {   # days from civil (proleptic Gregorian), then seconds
+      y = substr(t, 1, 4) + 0; m = substr(t, 6, 2) + 0; d = substr(t, 9, 2) + 0
+      if (m <= 2) { y--; m += 12 }
+      return ((365 * y + int(y / 4) - int(y / 100) + int(y / 400) + int((153 * (m - 3) + 2) / 5) + d) * 86400 \
+        + substr(t, 12, 2) * 3600 + substr(t, 15, 2) * 60 + substr(t, 18, 2))
+    }
+    { a = secs($1); n = secs($2); exit !(n - a >= -60 && n - a <= 10) }'
 }
 
 # Fusion backs guest RAM with a memsize-sized .vmem file in the VM's directory, allocated in full at

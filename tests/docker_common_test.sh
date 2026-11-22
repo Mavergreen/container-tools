@@ -144,15 +144,16 @@ case_op_lock_owner() {
 stub_vmx() { # $1 = pid pgrep reports for the VM's vmx ("" => none)
   printf '#!/bin/sh\n[ -n "%s" ] && echo %s\n' "$1" "$1" > "$BIN/pgrep"; chmod +x "$BIN/pgrep"
 }
-paused_log() {
+paused_log() { # [timestamp of the question, default now]
   export MAVERICKS_DOCKER_MACHDIR="$WORK/machines"; mkdir -p "$MAVERICKS_DOCKER_MACHDIR/container-tools"
-  cat > "$MAVERICKS_DOCKER_MACHDIR/container-tools/vmware.log" <<'LOG'
-2026-10-24T14:00:36.284-05:00| vmx| I125: Msg_Question:
-2026-10-24T14:00:36.284-05:00| vmx| I125: [msg.mainMemPosix.noSpaceCritical] The file system upon which '/x' resides is critically low on free space.
-2026-10-24T14:00:36.284-05:00| vmx| I125: [msg.mainMemPosix.noSpaceBasic] vmrun has paused this virtual machine because the disk on which the virtual machine is stored is almost full.
-2026-10-24T14:00:36.284-05:00| vmx| I125: ----------------------------------------
-2026-10-24T14:00:36.284-05:00| vmx| I125: MsgIsAnswered: Using builtin default 'Continue' as the answer for 'msg.mainMemPosix.noSpaceBasic'
-2026-10-24T14:00:36.284-05:00| vmx| I125: MsgQuestion: msg.mainMemPosix.noSpaceBasic reply=0
+  T="${1:-$(date '+%Y-%m-%dT%H:%M:%S').284-05:00}"
+  cat > "$MAVERICKS_DOCKER_MACHDIR/container-tools/vmware.log" <<LOG
+$T| vmx| I125: Msg_Question:
+$T| vmx| I125: [msg.mainMemPosix.noSpaceCritical] The file system upon which '/x' resides is critically low on free space.
+$T| vmx| I125: [msg.mainMemPosix.noSpaceBasic] vmrun has paused this virtual machine because the disk on which the virtual machine is stored is almost full.
+$T| vmx| I125: ----------------------------------------
+$T| vmx| I125: MsgIsAnswered: Using builtin default 'Continue' as the answer for 'msg.mainMemPosix.noSpaceBasic'
+$T| vmx| I125: MsgQuestion: msg.mainMemPosix.noSpaceBasic reply=0
 LOG
 }
 case_host_disk_full() {
@@ -161,10 +162,21 @@ case_host_disk_full() {
   ( . "$COMMON"; op_begin image-upgrade; [ "$(status_word)" = host-disk-full ] ) \
     || fail "host-disk-full must win over working:<op>"
   rm -rf "$MAVERICKS_DOCKER_STATE_DIR/op.lock"
-  touch -t 200001010000 "$MAVERICKS_DOCKER_MACHDIR/container-tools/vmware.log"
-  ( . "$COMMON"; [ "$(status_word)" = running ] ) || fail "a quiet log (the VM resumed) is not paused"
-  touch "$MAVERICKS_DOCKER_MACHDIR/container-tools/vmware.log"; stub_vmx ""
+  paused_log "2000-01-01T00:00:00.000-05:00"
+  ( . "$COMMON"; [ "$(status_word)" = running ] ) || fail "an old question (the VM resumed) is not paused"
+  paused_log; stub_vmx ""
   ( . "$COMMON"; [ "$(status_word)" = running ] ) || fail "no vmx process -> not paused"
+  teardown
+}
+# 2026-11-22: a noSpace question VMware answered at 11:42 was still among the log's last 12 lines at
+# 12:08, because the running VM had logged only a few lines since; one of them had just been written,
+# so the file looked fresh and the VM read as paused. The tick then stopped early on every run. Only a
+# question asked in the last 10 s means VMware is waiting now.
+case_host_disk_full_stale_question() {
+  setup; stub_dm Running; stub_vmx 4242; paused_log "2026-11-22T11:42:06.656-05:00"
+  echo "$(date '+%Y-%m-%dT%H:%M:%S').479-05:00| vmx| I125: GLHostMacOS: Host topology change finished" \
+    >> "$MAVERICKS_DOCKER_MACHDIR/container-tools/vmware.log"
+  ( . "$COMMON"; [ "$(status_word)" = running ] ) || fail "an old, answered noSpace question in a freshly written log is not a pause"
   teardown
 }
 
@@ -197,5 +209,6 @@ case_op_lock
 case_op_lock_status
 case_op_lock_owner
 case_host_disk_full
+case_host_disk_full_stale_question
 case_host_room_to_boot
 echo "docker_common_test: OK"

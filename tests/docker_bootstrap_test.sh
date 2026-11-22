@@ -529,7 +529,7 @@ EOF
   chmod +x "$BIN/docker-machine"
   printf '#!/bin/sh\necho 4242\n' > "$BIN/pgrep"; chmod +x "$BIN/pgrep"
   mkdir -p "$MAVERICKS_DOCKER_MACHDIR/container-tools"
-  printf '%s\n' "2026-10-24T14:00:36.284-05:00| vmx| I125: MsgQuestion: msg.mainMemPosix.noSpaceBasic reply=0" \
+  printf '%s\n' "$(date '+%Y-%m-%dT%H:%M:%S').284-05:00| vmx| I125: MsgQuestion: msg.mainMemPosix.noSpaceBasic reply=0" \
     > "$MAVERICKS_DOCKER_MACHDIR/container-tools/vmware.log"
   mkdir -p "$MAVERICKS_DOCKER_STATE_DIR/op.lock"
   printf 'image-upgrade\n' > "$MAVERICKS_DOCKER_STATE_DIR/op.lock/name"
