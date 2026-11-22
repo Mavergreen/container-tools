@@ -459,7 +459,7 @@ printf '%s\n' "\$*" >> "$DM_LOG"
 case "\$1" in status) exit 1 ;; esac
 EOF
   chmod +x "$BIN/docker-machine"
-  mkdir -p "$MAVERICKS_DOCKER_STATE_DIR/creating.lock"
+  mkdir -p "$MAVERICKS_DOCKER_STATE_DIR/creating.lock"  # portability-ok: pre-creates a held lock for the test; no race
   sh "$BOOT" || fail "should exit 0 when create locked"
   grep -q 'create' "$DM_LOG" && fail "must not create while lock held"
   grep -q 'docker-machine create' "$OSA_LOG" && fail "must not spawn create Terminal while lock held"
@@ -481,7 +481,7 @@ case "\$1" in
 esac
 EOF
   chmod +x "$BIN/docker-machine"
-  mkdir -p "$MAVERICKS_DOCKER_STATE_DIR/creating.lock"
+  mkdir -p "$MAVERICKS_DOCKER_STATE_DIR/creating.lock"  # portability-ok: pre-creates a held lock for the test; no race
   touch -t 200001010000 "$MAVERICKS_DOCKER_STATE_DIR/creating.lock"
   sh "$BOOT" || fail "should exit 0 on stale lock"
   grep -q 'create -d vmwarefusion' "$DM_LOG" || fail "stale lock must be reclaimed and create proceed"
@@ -532,7 +532,7 @@ printf '%s\n' "\$*" >> "$DM_LOG"
 case "\$1" in status) echo Stopped ;; start) : > "$WORK/started" ;; esac
 EOF
   chmod +x "$BIN/docker-machine"
-  mkdir -p "$MAVERICKS_DOCKER_STATE_DIR/op.lock"
+  mkdir -p "$MAVERICKS_DOCKER_STATE_DIR/op.lock"  # portability-ok: pre-creates a held lock for the test; no race
   printf 'stop\n' > "$MAVERICKS_DOCKER_STATE_DIR/op.lock/name"
   sh "$BOOT" || fail "should exit 0 when an op is in progress"
   [ -f "$WORK/started" ] && fail "bootstrap must NOT start the VM while an op holds op.lock"
@@ -558,7 +558,7 @@ EOF
   mkdir -p "$MAVERICKS_DOCKER_MACHDIR/container-tools"
   printf '%s\n' "$(date '+%Y-%m-%dT%H:%M:%S').284-05:00| vmx| I125: MsgQuestion: msg.mainMemPosix.noSpaceBasic reply=0" \
     > "$MAVERICKS_DOCKER_MACHDIR/container-tools/vmware.log"
-  mkdir -p "$MAVERICKS_DOCKER_STATE_DIR/op.lock"
+  mkdir -p "$MAVERICKS_DOCKER_STATE_DIR/op.lock"  # portability-ok: pre-creates a held lock for the test; no race
   printf 'image-upgrade\n' > "$MAVERICKS_DOCKER_STATE_DIR/op.lock/name"
   sh "$BOOT" || fail "should exit 0 when the host disk is full"
   [ -f "$WORK/started" ] && fail "bootstrap must NOT start a VM VMware has paused"

@@ -12,7 +12,7 @@ create_machine() {
   mkdir -p "$STATE_DIR" 2>/dev/null || true
   # Atomic acquire. Returns 1 if another run holds the lock (TOCTOU-safe vs the
   # create_in_progress pre-check) so main can bail instead of touching a half-created VM.
-  mkdir "$LOCK" 2>/dev/null || { log "create lock held; skipping create"; return 1; }
+  mkdir "$LOCK" 2>/dev/null || { log "create lock held; skipping create"; return 1; }  # portability-ok: runs only on the Mac (BSD mkdir is atomic)
   log "creating machine '$MACHINE'"
   if [ "${MAVERICKS_DOCKER_NONINTERACTIVE:-}" = 1 ]; then
     docker-machine create -d vmwarefusion --vmwarefusion-boot2docker-url "$ISO" "$MACHINE" >>"$LOG" 2>&1

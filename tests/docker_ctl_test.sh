@@ -149,7 +149,7 @@ case_auto_free() {
 }
 case_auto_free_waits_for_op() {
   setup; stub_dm_df Running '/dev/sda1 18668944 16000000 1700000 91% /mnt/sda1'; stub_docker_df
-  mkdir -p "$MAVERICKS_DOCKER_STATE_DIR/op.lock"
+  mkdir -p "$MAVERICKS_DOCKER_STATE_DIR/op.lock"  # portability-ok: pre-creates a held lock for the test; no race
   echo image-upgrade > "$MAVERICKS_DOCKER_STATE_DIR/op.lock/name"; echo $$ > "$MAVERICKS_DOCKER_STATE_DIR/op.lock/pid"
   sh "$CTL" auto-free >/dev/null && fail "auto-free must fail while another op holds op.lock"
   grep -q prune "$DOCKER_LOG" && fail "auto-free must not prune while another op holds op.lock"
@@ -297,7 +297,7 @@ case_enlarge_disk_refusals() {
   sh "$CTL" enlarge-disk >/dev/null 2>&1 && fail "a stopped VM: refuse (its partition layout can't be checked)"
   grep -q '^vdm' "$DM_LOG" && fail "a refused enlarge-disk must not grow the vmdk"
   teardown
-  setup; stub_enlarge last 0; mkdir -p "$MAVERICKS_DOCKER_STATE_DIR/op.lock"
+  setup; stub_enlarge last 0; mkdir -p "$MAVERICKS_DOCKER_STATE_DIR/op.lock"  # portability-ok: pre-creates a held lock for the test; no race
   echo start > "$MAVERICKS_DOCKER_STATE_DIR/op.lock/name"; echo $$ > "$MAVERICKS_DOCKER_STATE_DIR/op.lock/pid"
   sh "$CTL" enlarge-disk >/dev/null 2>&1 && fail "another op holds op.lock: refuse"
   grep -q '^stop' "$DM_LOG" && fail "enlarge-disk must not stop the VM under another op"
@@ -361,7 +361,7 @@ case_readiness() {
   [ "$(sh "$CTL" readiness)" = finishing-setup ] || fail "running but the API not answering yet -> finishing-setup"
   echo Stopped > "$WORK/vmstate"
   [ "$(sh "$CTL" readiness)" = stopped ] || fail "a stopped VM -> stopped"
-  echo Running > "$WORK/vmstate"; echo ok > "$WORK/api"; mkdir -p "$MAVERICKS_DOCKER_STATE_DIR/op.lock"
+  echo Running > "$WORK/vmstate"; echo ok > "$WORK/api"; mkdir -p "$MAVERICKS_DOCKER_STATE_DIR/op.lock"  # portability-ok: pre-creates a held lock for the test; no race
   echo restart > "$MAVERICKS_DOCKER_STATE_DIR/op.lock/name"; echo $$ > "$MAVERICKS_DOCKER_STATE_DIR/op.lock/pid"
   [ "$(sh "$CTL" readiness)" = working:restart ] || fail "an op in progress -> working:<op>"
   rm -rf "$MAVERICKS_DOCKER_STATE_DIR/op.lock"
@@ -423,7 +423,7 @@ case_repair() {
   sh "$CTL" repair >/dev/null || fail "repair on a ready VM is fine"
   grep -q regenerate-certs "$DM_LOG" && fail "repair must not regenerate certs for a ready VM"
   teardown
-  setup; stub_ready Running tls; mkdir -p "$MAVERICKS_DOCKER_STATE_DIR/op.lock"
+  setup; stub_ready Running tls; mkdir -p "$MAVERICKS_DOCKER_STATE_DIR/op.lock"  # portability-ok: pre-creates a held lock for the test; no race
   echo image-upgrade > "$MAVERICKS_DOCKER_STATE_DIR/op.lock/name"; echo $$ > "$MAVERICKS_DOCKER_STATE_DIR/op.lock/pid"
   sh "$CTL" repair >/dev/null 2>&1 && fail "repair must refuse while another op runs"
   grep -q regenerate-certs "$DM_LOG" && fail "repair must not touch certs under another op"

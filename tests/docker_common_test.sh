@@ -38,7 +38,7 @@ case_status_word() {
 
 case_creating() {
   setup; stub_dm Stopped
-  mkdir -p "$MAVERICKS_DOCKER_STATE_DIR/creating.lock"   # fresh lock
+  mkdir -p "$MAVERICKS_DOCKER_STATE_DIR/creating.lock"   # fresh lock  # portability-ok: pre-creates a held lock for the test; no race
   ( . "$COMMON"; [ "$(status_word)" = creating ] ) || fail "fresh lock -> creating"
   teardown
 }

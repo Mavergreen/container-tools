@@ -115,7 +115,7 @@ user_stopped() { # true when the user stopped the VM during this boot; drops a m
 op_begin() { # name  — announce a long op: create the lock and mark the state working:<name>
   _op=${1:-working}   # tolerate a zero-arg call under the callers' `set -u`
   mkdir -p "$STATE_DIR" 2>/dev/null || true
-  mkdir "$OP_LOCK" 2>/dev/null || true
+  mkdir "$OP_LOCK" 2>/dev/null || true  # portability-ok: runs only on the Mac (BSD mkdir is atomic)
   printf '%s\n' "$_op" > "$OP_LOCK/name" 2>/dev/null || true
   printf '%s\n' "$$" > "$OP_LOCK/pid" 2>/dev/null || true
   write_state "working:$_op"
@@ -125,9 +125,9 @@ op_begin() { # name  — announce a long op: create the lock and mark the state 
 # must never overlap one (auto-free, enlarge-disk). A dead owner's lock is reclaimed once.
 op_try_begin() { # name
   mkdir -p "$STATE_DIR" 2>/dev/null || true
-  if ! mkdir "$OP_LOCK" 2>/dev/null; then
+  if ! mkdir "$OP_LOCK" 2>/dev/null; then  # portability-ok: runs only on the Mac (BSD mkdir is atomic)
     op_in_progress && return 1
-    mkdir "$OP_LOCK" 2>/dev/null || return 1
+    mkdir "$OP_LOCK" 2>/dev/null || return 1  # portability-ok: runs only on the Mac (BSD mkdir is atomic)
   fi
   printf '%s\n' "$1" > "$OP_LOCK/name" 2>/dev/null || true
   printf '%s\n' "$$" > "$OP_LOCK/pid" 2>/dev/null || true
