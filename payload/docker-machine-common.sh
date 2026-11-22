@@ -15,8 +15,10 @@ case ":$PATH:" in
   *) PATH="$PATH:$BINDIR"; export PATH ;;
 esac
 
-MACHINE=container-tools
-CONTEXT=mavericks
+# Private test seams: a scratch VM (with its own DOCKER_CONFIG, so `docker context use` can't move
+# the user's) proves VM-level verbs like enlarge-disk without touching the user's VM or context.
+MACHINE=${MAVERICKS_DOCKER_MACHINE:-container-tools}
+CONTEXT=${MAVERICKS_DOCKER_CONTEXT:-mavericks}
 ISO=${MAVERICKS_DOCKER_ISO:-/usr/local/mavergreen/container-tools/share/boot2docker.iso}
 LOG=${MAVERICKS_DOCKER_LOG:-$HOME/Library/Logs/Mavergreen/container-tools/bootstrap.log}
 STATE_DIR=${MAVERICKS_DOCKER_STATE_DIR:-$HOME/Library/Application Support/Mavergreen/container-tools}
@@ -119,6 +121,19 @@ op_begin() { # name  — announce a long op: create the lock and mark the state 
   write_state "working:$_op"
 }
 
+# Like op_begin, but takes op.lock atomically and fails while another op holds it, for the ops that
+# must never overlap one (auto-free, enlarge-disk). A dead owner's lock is reclaimed once.
+op_try_begin() { # name
+  mkdir -p "$STATE_DIR" 2>/dev/null || true
+  if ! mkdir "$OP_LOCK" 2>/dev/null; then
+    op_in_progress && return 1
+    mkdir "$OP_LOCK" 2>/dev/null || return 1
+  fi
+  printf '%s\n' "$1" > "$OP_LOCK/name" 2>/dev/null || true
+  printf '%s\n' "$$" > "$OP_LOCK/pid" 2>/dev/null || true
+  write_state "working:$1"
+}
+
 op_end() { # release the lock and settle the state to the real machine status
   rm -rf "$OP_LOCK" 2>/dev/null || true
   write_state "$(status_word)"
@@ -201,14 +216,7 @@ auto_free_due() {
   [ $(( $(date +%s) - _last )) -ge "$AUTO_FREE_EVERY" ]
 }
 auto_free_space() {
-  mkdir -p "$STATE_DIR" 2>/dev/null || true
-  if ! mkdir "$OP_LOCK" 2>/dev/null; then
-    op_in_progress && return 1   # reclaims a dead owner's lock, then try once more
-    mkdir "$OP_LOCK" 2>/dev/null || return 1
-  fi
-  printf 'auto-free\n' > "$OP_LOCK/name" 2>/dev/null || true
-  printf '%s\n' "$$" > "$OP_LOCK/pid" 2>/dev/null || true
-  write_state working:auto-free
+  op_try_begin auto-free || return 1
   date +%s > "$AUTO_FREE_STAMP" 2>/dev/null || true
   log "auto-free: disk was $(cat "$DISK_FILE" 2>/dev/null || echo unknown); removing dangling images and build cache"
   _rc=0
@@ -258,6 +266,73 @@ disk_advice() {
       log) echo "$_pre the log of container ${_logname:-$_logid} is $(_gb "$_b"). Recreating the container clears it." ;;
     esac; fi
   }
+}
+
+# Enlarge the VM's disk in place, keeping images, volumes and containers: the procedure proven by
+# hand on the owner's VM on 2026-11-21 (20 GB to 50 GB). Stop; grow the sparse vmdk with Fusion's
+# vmware-vdiskmanager -x (GB there means GiB: 50GB became 104857600 sectors); start; then, online,
+# grow sda1 to the new end (sfdisk also moves GPT's backup header there), tell the kernel (partx)
+# and grow the ext4 (resize2fs). That only works because boot2docker puts swap first and the data
+# partition sda1 last, so enlarge_plan checks it, along with everything else that would make the
+# procedure unsafe, BEFORE anything is stopped. The vmdk grows on the Mac's disk only as the VM
+# writes, but the Mac filling up is what pauses the VM, so the plan wants room for all of it.
+VDISKMANAGER=${MAVERICKS_DOCKER_VDISKMANAGER:-/Applications/VMware Fusion.app/Contents/Library/vmware-vdiskmanager}
+ENLARGE_BY_GB=20   # what the menu's Enlarge VM Disk… adds
+enlarge_plan() { # [new GB]  -- prints "CUR_GB NEW_GB MAC_GB_NEEDED MAC_GB_FREE", or why not and fails
+  _vmdk="$MACHDIR/$MACHINE/$MACHINE.vmdk"
+  [ "$(machine_status)" = Running ] || { echo "Start Docker first, so the VM's disk layout can be checked."; return 1; }
+  _hdr=$(head -c 2048 "$_vmdk" 2>/dev/null | LC_ALL=C tr -cd '[:print:]\n')
+  case "$_hdr" in
+    *'createType="monolithicSparse"'*) ;;
+    *) echo "The VM's disk isn't a single sparse vmdk, so it can't be enlarged automatically."; return 1 ;;
+  esac
+  for _d in "$MACHDIR/$MACHINE/$MACHINE"-0*.vmdk; do
+    [ -e "$_d" ] && { echo "The VM has a snapshot; delete it in VMware Fusion first."; return 1; }
+  done
+  _sec=$(printf '%s\n' "$_hdr" | sed -n 's/^RW \([0-9][0-9]*\) SPARSE.*/\1/p' | head -1)
+  [ -n "$_sec" ] || { echo "Couldn't read the size of the VM's disk."; return 1; }
+  _last=$(docker-machine ssh "$MACHINE" sudo sfdisk --dump /dev/sda 2>/dev/null | awk -F'[=,]' '
+    /^\/dev\/sda[0-9]+ :/ { split($1, a, " "); s = $2 + 0; if (s > max) { max = s; dev = a[1] } }
+    END { print dev }')
+  [ "$_last" = /dev/sda1 ] || { echo "Docker's data partition isn't the last one on the VM's disk, so it can't be grown in place."; return 1; }
+  _cur=$(( (_sec + 2097151) / 2097152 ))
+  _new=${1:-$(( _cur + ENLARGE_BY_GB ))}
+  case "$_new" in ''|*[!0-9]*) echo "Give the new size in whole GB."; return 1 ;; esac
+  [ $(( _new * 2097152 )) -gt "$_sec" ] || { echo "The VM's disk is already $_cur GB; give a bigger size."; return 1; }
+  _need=$(( ((_new * 2097152 - _sec) * 512 + 1073741823) / 1073741824 + 4 ))
+  _avail=$(df -k "$MACHDIR" 2>/dev/null | awk 'NR == 2 { print int($4 / 1048576) }')
+  [ "${_avail:-0}" -ge "$_need" ] || { echo "Enlarging the VM's disk to $_new GB needs about $_need GB free on this Mac; ${_avail:-0} GB free now."; return 1; }
+  echo "$_cur $_new $_need $_avail"
+}
+enlarge_disk() { # [new GB]
+  op_try_begin enlarge-disk || { echo "Another Docker operation is running; try again when it finishes."; return 1; }
+  if ! _plan=$(enlarge_plan "${1:-}"); then
+    log "enlarge-disk refused: $_plan"; echo "$_plan"; op_end; return 1
+  fi
+  _new=$(echo "$_plan" | awk '{ print $2 }')
+  log "enlarge-disk: $(echo "$_plan" | awk '{ print $1 }') GB -> $_new GB"
+  docker-machine stop "$MACHINE" >>"$LOG" 2>&1 || true
+  _i=0; while [ -n "$(vmx_pid)" ] && [ "$_i" -lt 120 ]; do sleep 1; _i=$(( _i + 1 )); done
+  _rc=0
+  if [ -n "$(vmx_pid)" ]; then
+    log "enlarge-disk: the VM didn't stop; its disk was not touched"; _rc=1
+  elif ! "$VDISKMANAGER" -x "${_new}GB" "$MACHDIR/$MACHINE/$MACHINE.vmdk" >>"$LOG" 2>&1; then
+    log "enlarge-disk: vmware-vdiskmanager failed; the disk is unchanged"; _rc=1
+  fi
+  docker-machine start "$MACHINE" >>"$LOG" 2>&1 || true   # always bring the VM back up
+  if [ "$(machine_status)" = Running ]; then
+    sync_context
+    if [ "$_rc" -eq 0 ] && ! docker-machine ssh "$MACHINE" \
+        "sudo sh -c 'echo ,+ | sfdisk --no-reread -N 1 /dev/sda && partx -u /dev/sda && resize2fs /dev/sda1'" >>"$LOG" 2>&1; then
+      log "enlarge-disk: the vmdk is now $_new GB but growing sda1 failed; finish by hand with: docker-machine ssh $MACHINE \"sudo sh -c 'echo ,+ | sfdisk --no-reread -N 1 /dev/sda && partx -u /dev/sda && resize2fs /dev/sda1'\""
+      _rc=1
+    fi
+  else
+    log "enlarge-disk: the VM didn't come back up"; _rc=1
+  fi
+  log "enlarge-disk: disk now $(disk_refresh)"
+  op_end
+  return $_rc
 }
 
 write_state() {

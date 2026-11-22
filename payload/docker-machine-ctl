@@ -66,8 +66,11 @@ case "${1:-}" in
   auto-free) auto_free_space ;;
   # What fills the VM's disk and the action that fits (see disk_advice). Reports only.
   disk-advice) disk_advice ;;
+  # Enlarge the VM's disk in place (see enlarge_disk); the plan says what would happen, or why not.
+  enlarge-disk-plan) enlarge_plan "${2:-}" ;;
+  enlarge-disk) enlarge_disk "${2:-}" ;;
   setup)   clear_user_stopped; exec docker-machine-bootstrap ;;
   migrate) exec docker-machine-migrate ;;
   vmx-pid) vmx_pid ;;
-  *) echo "usage: docker-machine-ctl {status|start|stop|restart|image-status|image-upgrade|disk-status|reclaimable|free-space|auto-free|disk-advice|login-status|login-on|login-off|setup|migrate|vmx-pid}" >&2; exit 2 ;;
+  *) echo "usage: docker-machine-ctl {status|start|stop|restart|image-status|image-upgrade|disk-status|reclaimable|free-space|auto-free|disk-advice|enlarge-disk-plan|enlarge-disk [GB]|login-status|login-on|login-off|setup|migrate|vmx-pid}" >&2; exit 2 ;;
 esac

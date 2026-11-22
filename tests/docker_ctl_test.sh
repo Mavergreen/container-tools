@@ -208,6 +208,109 @@ case_disk_advice() {
   grep -E -q 'prune|rm |volume rm' "$DOCKER_LOG" && fail "disk-advice must only report"
   teardown
 }
+# enlarge-disk: the procedure proven by hand on 2026-11-21 (20 GB to 50 GB, nothing lost). Stop, grow
+# the sparse vmdk with vmware-vdiskmanager -x, start, then grow sda1 and its ext4 online. Refuses,
+# before stopping anything, unless the VM is running, the vmdk is one sparse file with no snapshot,
+# sda1 is the last partition, the new size is bigger, and the Mac has room. Runs under op.lock.
+VMDIR() { echo "$HOME/.docker/machine/machines/container-tools"; }
+stub_enlarge() { # $1 = layout: last | first ; $2 = vdiskmanager exit code
+  mkdir -p "$(VMDIR)"
+  printf 'KDMV\n# Disk DescriptorFile\ncreateType="monolithicSparse"\n# Extent description\nRW 40960000 SPARSE "container-tools.vmdk"\n' > "$(VMDIR)/container-tools.vmdk"
+  : > "$(VMDIR)/container-tools.vmsd"
+  echo Running > "$WORK/vmstate"
+  if [ "$1" = last ]; then
+    printf '/dev/sda1 : start=     2050048, size=    38909919, type=L\n/dev/sda2 : start=        2048, size=     2048000, type=S\n' > "$WORK/dump"
+  else
+    printf '/dev/sda1 : start=        2048, size=    38909919, type=L\n/dev/sda2 : start=    38911967, size=     2048000, type=S\n' > "$WORK/dump"
+  fi
+  cat > "$BIN/docker-machine" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >> "$DM_LOG"
+case "\$1" in
+  status) cat "$WORK/vmstate" ;;
+  stop)   echo Stopped > "$WORK/vmstate" ;;
+  start)  echo Running > "$WORK/vmstate" ;;
+  ssh) case "\$*" in
+         *"sfdisk --dump"*) cat "$WORK/dump" ;;
+         *"df -P"*) echo 'Filesystem 1024-blocks Used Available Capacity Mounted on'; echo '/dev/sda1 49611072 9480476 37866540 20% /mnt/sda1' ;;
+       esac ;;
+esac
+exit 0
+EOF
+  chmod +x "$BIN/docker-machine"
+  printf '#!/bin/sh\n[ "$(cat "%s/vmstate")" = Running ] && echo 4242\nexit 0\n' "$WORK" > "$BIN/pgrep"; chmod +x "$BIN/pgrep"
+  printf '#!/bin/sh\necho "Filesystem 1024-blocks Used Available Capacity Mounted on"\necho "/dev/x 1 1 %s 50%% /"\n' "${MAC_AVAIL_KB:-73400320}" > "$BIN/df"; chmod +x "$BIN/df"
+  cat > "$BIN/vdiskmanager" <<EOF
+#!/bin/sh
+printf 'vdm %s [%s]\n' "\$*" "\$(cat "$WORK/vmstate")" >> "$DM_LOG"
+[ -d "$MAVERICKS_DOCKER_STATE_DIR/op.lock" ] || echo "vdiskmanager without op.lock" >> "$WORK/violations"
+exit $2
+EOF
+  chmod +x "$BIN/vdiskmanager"
+  export MAVERICKS_DOCKER_VDISKMANAGER="$BIN/vdiskmanager"
+}
+case_enlarge_disk_plan() {
+  setup; stub_enlarge last 0
+  out=$(sh "$CTL" enlarge-disk-plan) || fail "enlarge-disk-plan exit 0 (got: $out)"
+  [ "$out" = "20 40 25 70" ] || fail "plan: current GB, new GB (+20), Mac GB needed (growth + 4 headroom), Mac GB free (got: $out)"
+  out=$(sh "$CTL" enlarge-disk-plan 50) || fail "a bigger explicit size is fine"
+  [ "$out" = "20 50 35 70" ] || fail "plan with an explicit size (got: $out)"
+  sh "$CTL" enlarge-disk-plan 19 >/dev/null 2>&1 && fail "a size no bigger than the disk must be refused"
+  grep -q '^stop' "$DM_LOG" && fail "planning must not stop the VM"
+  teardown
+}
+case_enlarge_disk() {
+  setup; stub_enlarge last 0
+  sh "$CTL" enlarge-disk >/dev/null || fail "enlarge-disk exit 0"
+  grep -q '^stop container-tools' "$DM_LOG" || fail "enlarge-disk must stop the VM before growing the vmdk"
+  grep -qx "vdm -x 40GB $(VMDIR)/container-tools.vmdk \[Stopped\]" "$DM_LOG" || fail "vdiskmanager -x must grow the vmdk while the VM is stopped (got: $(grep vdm "$DM_LOG"))"
+  grep -q '^start container-tools' "$DM_LOG" || fail "enlarge-disk must start the VM again"
+  grep -q 'sfdisk --no-reread -N 1 /dev/sda' "$DM_LOG" || fail "enlarge-disk must grow sda1 to the new end"
+  grep -q 'partx -u /dev/sda' "$DM_LOG" || fail "enlarge-disk must tell the kernel the new partition size"
+  grep -q 'resize2fs /dev/sda1' "$DM_LOG" || fail "enlarge-disk must grow the ext4 online"
+  [ "$(sed -n '/^stop/=' "$DM_LOG" | head -1)" -lt "$(sed -n '/^vdm/=' "$DM_LOG")" ] || fail "stop before vdiskmanager"
+  [ "$(sed -n '/^vdm/=' "$DM_LOG")" -lt "$(sed -n '/resize2fs/=' "$DM_LOG")" ] || fail "partition grow after the vmdk grow"
+  [ -f "$WORK/violations" ] && fail "$(cat "$WORK/violations")"
+  [ -d "$MAVERICKS_DOCKER_STATE_DIR/op.lock" ] && fail "enlarge-disk must release op.lock"
+  [ "$(cat "$(DISKF)")" = "49611072 9480476 37866540 ok" ] || fail "enlarge-disk must refresh the cached disk numbers"
+  [ "$(cat "$MAVERICKS_DOCKER_STATE_DIR/state")" = running ] || fail "enlarge-disk must settle the state to running"
+  teardown
+}
+case_enlarge_disk_refusals() {
+  setup; stub_enlarge first 0
+  sh "$CTL" enlarge-disk >/dev/null 2>&1 && fail "sda1 not last: refuse"
+  grep -q '^stop' "$DM_LOG" && fail "a refused enlarge-disk must not stop the VM (sda1 not last)"
+  teardown
+  setup; stub_enlarge last 0; : > "$(VMDIR)/container-tools-000001.vmdk"
+  sh "$CTL" enlarge-disk >/dev/null 2>&1 && fail "a snapshot delta disk: refuse"
+  grep -q '^stop' "$DM_LOG" && fail "a refused enlarge-disk must not stop the VM (snapshot)"
+  teardown
+  setup; stub_enlarge last 0; sed -i '' 's/monolithicSparse/monolithicFlat/' "$(VMDIR)/container-tools.vmdk"
+  sh "$CTL" enlarge-disk >/dev/null 2>&1 && fail "not one sparse file: refuse"
+  teardown
+  setup; MAC_AVAIL_KB=10485760 stub_enlarge last 0
+  out=$(sh "$CTL" enlarge-disk 2>&1) && fail "no room on the Mac: refuse"
+  case "$out" in *"GB free"*) ;; *) fail "the no-room refusal must give the numbers (got: $out)" ;; esac
+  grep -q '^stop' "$DM_LOG" && fail "a refused enlarge-disk must not stop the VM (no room)"
+  teardown
+  setup; stub_enlarge last 0; echo Stopped > "$WORK/vmstate"
+  sh "$CTL" enlarge-disk >/dev/null 2>&1 && fail "a stopped VM: refuse (its partition layout can't be checked)"
+  grep -q '^vdm' "$DM_LOG" && fail "a refused enlarge-disk must not grow the vmdk"
+  teardown
+  setup; stub_enlarge last 0; mkdir -p "$MAVERICKS_DOCKER_STATE_DIR/op.lock"
+  echo start > "$MAVERICKS_DOCKER_STATE_DIR/op.lock/name"; echo $$ > "$MAVERICKS_DOCKER_STATE_DIR/op.lock/pid"
+  sh "$CTL" enlarge-disk >/dev/null 2>&1 && fail "another op holds op.lock: refuse"
+  grep -q '^stop' "$DM_LOG" && fail "enlarge-disk must not stop the VM under another op"
+  teardown
+}
+case_enlarge_disk_vdm_fails() {
+  setup; stub_enlarge last 3
+  sh "$CTL" enlarge-disk >/dev/null 2>&1 && fail "a failed vdiskmanager must fail enlarge-disk"
+  grep -q '^start container-tools' "$DM_LOG" || fail "a failed vdiskmanager must still bring the VM back up"
+  grep -q 'resize2fs' "$DM_LOG" && fail "a failed vdiskmanager must not touch the partition"
+  [ -d "$MAVERICKS_DOCKER_STATE_DIR/op.lock" ] && fail "a failed enlarge-disk must release op.lock"
+  teardown
+}
 case_stop_marks_user_stopped() {
   setup; stub_dm Stopped
   MAVERICKS_DOCKER_BOOT_ID=boot-A sh "$CTL" stop >/dev/null || fail "stop exit 0"
@@ -447,6 +550,10 @@ case_free_space
 case_auto_free
 case_auto_free_waits_for_op
 case_disk_advice
+case_enlarge_disk_plan
+case_enlarge_disk
+case_enlarge_disk_refusals
+case_enlarge_disk_vdm_fails
 case_image
 case_image_upgrade_fails
 case_start_announces

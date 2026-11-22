@@ -68,6 +68,7 @@
     if ([op isEqualToString:@"restart"])       return @"Restarting Docker…";
     if ([op isEqualToString:@"free-space"])    return @"Freeing up space…";
     if ([op isEqualToString:@"auto-free"])     return @"Freeing up space…";
+    if ([op isEqualToString:@"enlarge-disk"])  return @"Enlarging VM disk…";
     return @"Working…";
   }
   if ([s isEqualToString:@"running"])   return @"Docker: Running";
@@ -103,6 +104,7 @@
       [m addItemWithTitle:@"Stop Docker" action:@selector(doStop:) keyEquivalent:@""];
       [m addItemWithTitle:@"Restart Docker" action:@selector(doRestart:) keyEquivalent:@""];
       [m addItemWithTitle:@"Free Up Space…" action:@selector(doFreeSpace:) keyEquivalent:@""];
+      [m addItemWithTitle:@"Enlarge VM Disk…" action:@selector(doEnlargeDisk:) keyEquivalent:@""];
     } else {
       [m addItemWithTitle:@"Start Docker" action:@selector(doStart:) keyEquivalent:@""];
     }
@@ -164,6 +166,11 @@
     else    [self notifyTitle:@"Container Tools" text:@"Freeing up space failed — see Show Log."];
     return;
   }
+  if ([verb isEqualToString:@"enlarge-disk"]) {
+    if (ok) [self notifyTitle:@"Container Tools" text:[self diskLineForState:@"running"]];
+    else    [self notifyTitle:@"Container Tools" text:@"Enlarging the VM disk failed — see Show Log."];
+    return;
+  }
   if (ok) return;   // start/stop/restart: silent on success
   if ([verb isEqualToString:@"start"])   [self notifyTitle:@"Container Tools" text:@"Starting Docker failed — see Show Log."];
   if ([verb isEqualToString:@"stop"])    [self notifyTitle:@"Container Tools" text:@"Stopping Docker failed — see Show Log."];
@@ -202,6 +209,32 @@
     [a addButtonWithTitle:@"Cancel"];
     [NSApp activateIgnoringOtherApps:YES];      // a menu-bar extra's alert must come to the front
     if ([a runModal] == NSAlertFirstButtonReturn) [self runAndRefresh:@"free-space"];
+  }];
+}
+
+// Grow the VM's disk in place by ctl's default step (enlarge_disk in docker-machine-common.sh).
+// enlarge-disk-plan says what would happen, or why it can't; a refusal is shown, not run.
+- (void)doEnlargeDisk:(id)s {
+  [self.controller runVerb:@"enlarge-disk-plan" completion:^(NSString *out, int code) {
+    NSString *plan = [out stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    NSArray *f = [plan componentsSeparatedByString:@" "];
+    NSAlert *a = [[NSAlert alloc] init];
+    [NSApp activateIgnoringOtherApps:YES];      // a menu-bar extra's alert must come to the front
+    if (code != 0 || f.count != 4) {
+      a.messageText = @"The Docker VM's disk can't be enlarged right now.";
+      a.informativeText = plan.length ? plan : @"(No reason given; see Show Log.)";
+      [a addButtonWithTitle:@"OK"];
+      [a runModal];
+      return;
+    }
+    a.messageText = [NSString stringWithFormat:@"Enlarge the Docker VM's disk from %@ GB to %@ GB?", f[0], f[1]];
+    a.informativeText = [NSString stringWithFormat:
+      @"Docker stops for a few minutes while the disk grows. Images, volumes and containers are kept; "
+       "containers set to restart come back by themselves.\n\nThis needs about %@ GB free on this Mac "
+       "(%@ GB free now). The disk file grows only as Docker uses it.", f[2], f[3]];
+    [a addButtonWithTitle:@"Enlarge"];   // first = default
+    [a addButtonWithTitle:@"Cancel"];
+    if ([a runModal] == NSAlertFirstButtonReturn) [self runAndRefresh:@"enlarge-disk"];
   }];
 }
 
