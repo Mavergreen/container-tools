@@ -60,13 +60,13 @@ grep -q -- '--postinstall-hook' "$ROOT/cmake/package_pkg.sh" || fail "package_pk
 grep -q 'asuser' "$ROOT/cmake/postinstall-hook.sh" || fail "the postinstall hook must launch the app as the console user"
 
 grep -q -- '--menubar-app' "$ROOT/.github/workflows/release.yml" || fail "release.yml must pass --menubar-app"
-# Anchored at command position: 'cmake -S menubar' is a substring of 'shipyard-cmake -S menubar', so
-# the unanchored form cannot fail either way. Asserting the line is the only version with teeth.
-grep -qE '^[[:space:]]*shipyard-cmake -S menubar([[:space:]]|$)' "$ROOT/.github/workflows/release.yml" \
-  || fail "release.yml must build the menubar app with shipyard-cmake"
-if grep -qE '^[[:space:]]*cmake -S menubar([[:space:]]|$)' "$ROOT/.github/workflows/release.yml"; then
-  fail "release.yml configures menubar with a plain cmake (only shipyard-cmake configures against shipyard)"
-fi
+# The menu-bar app (and the updater) build through cmake/build_apps.sh with clang22, on the Linux
+# build-apps job: shipyard-cmake on a Mac, the host's cmake on Linux (where shipyard's
+# MavericksShipyard_DIR points find_package at the action checkout).
+grep -qE '^[[:space:]]*run: sh cmake/build_apps\.sh ' "$ROOT/.github/workflows/release.yml" \
+  || fail "release.yml must build the apps with cmake/build_apps.sh"
+grep -q -- '-S "$ROOT/$app"' "$ROOT/cmake/build_apps.sh" || fail "build_apps.sh must configure each app's own project"
+grep -q 'fetch-clang22.sh' "$ROOT/cmake/build_apps.sh" || fail "build_apps.sh must compile with clang22"
 
 # Fusion-absent is actionable: a "Get VMware Fusion" item/handler runs the get-fusion helper, and a
 # one-time alert (seeded in NSUserDefaults) prompts on first no-fusion. The old dead disabled item is gone.
