@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: macOS-only -- drives shipyard's pkgbuild/productbuild/PlistBuddy helpers
+# platform: host-agnostic -- shipyard's packaging seams run through stevedore on Linux or a Mac (the release packages on ubuntu-latest)
 # Assemble the (unsigned) container-tools product .pkg: the docker CLI + Compose + Machine binaries,
 # the boot2docker.iso, and the Sparkle updater (app + shim + daily LaunchAgent), with a hard 10.9.5
 # install floor. Signing + appcast happen separately (shared sign_and_appcast.sh) in the release

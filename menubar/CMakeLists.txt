@@ -8,8 +8,9 @@ set(CMAKE_OSX_DEPLOYMENT_TARGET 10.9 CACHE STRING "runs on the 10.9 box")
 set(CMAKE_OSX_ARCHITECTURES x86_64 CACHE STRING "Intel-only (10.9)")
 project(DockerMenu LANGUAGES OBJC)
 find_package(MavericksShipyard REQUIRED)
-set(MAVERICKS_REQUIRE_LANGS OBJC)
-include(Mavericks)   # AppleClang gate + build conventions
+# clang22 on every host (cmake/build_apps.sh), like the rest of the family: no AppleClang gate.
+set(MAVERICKS_REQUIRE_APPLECLANG OFF)
+include(Mavericks)   # build conventions
 
 # Version from the repo root (this project's source dir is menubar/), derived not committed.
 include("${CMAKE_SOURCE_DIR}/../cmake/ContainerToolsVersion.cmake")

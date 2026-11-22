@@ -183,26 +183,6 @@ jobs:
           ls -l "$CROSS_BUILD_DIR/docker-cli/docker" "$CROSS_BUILD_DIR/docker-compose/docker-compose" \
             "$CROSS_BUILD_DIR/docker-machine/docker-machine" "$CROSS_BUILD_DIR/lazydocker/lazydocker"
 
-      # Build the Sparkle updater .app on every build (catches updater breaks on PRs). The updater must
-      # NOT link any docker product (self-update circularity); its own binary is named
-      # container-tools-updater, so skip line 1 of otool before checking for a docker linkage.
-      - name: Build the Sparkle updater (must not link docker)
-        run: |
-          # The x86_64 Sparkle slice is auto-derived from the updater's CMAKE_OSX_ARCHITECTURES.
-          shipyard-cmake -S updater -B "$MAVERICKS_BUILD_ROOT/container-tools-updater" -DCMAKE_OBJC_COMPILER=/usr/bin/clang \
-            -DCMAKE_TOOLCHAIN_FILE="$SHIPYARD_SCRIPTS/../MavericksToolchain.cmake"
-          shipyard-cmake --build "$MAVERICKS_BUILD_ROOT/container-tools-updater"
-          BIN="$MAVERICKS_BUILD_ROOT/container-tools-updater/container-tools-updater.app/Contents/MacOS/container-tools-updater"
-          otool -L "$BIN" | tee /tmp/o.txt
-          if otool -L "$BIN" | tail -n +2 | grep -iq docker; then
-            echo "::error::updater links a docker product (self-update circularity)"; exit 1; fi
-
-      - name: Build the menu-bar app
-        run: |
-          shipyard-cmake -S menubar -B "$MAVERICKS_BUILD_ROOT/container-tools-menubar" -DCMAKE_OBJC_COMPILER=/usr/bin/clang \
-            -DCMAKE_TOOLCHAIN_FILE="$SHIPYARD_SCRIPTS/../MavericksToolchain.cmake"
-          shipyard-cmake --build "$MAVERICKS_BUILD_ROOT/container-tools-menubar"
-
       - name: The build must not have written into the source tree
         run: sh "$SHIPYARD_SCRIPTS/assert-tree-clean.sh"
 
@@ -218,8 +198,6 @@ jobs:
           cp "$CROSS/docker-compose/docker-compose" stage/docker-compose
           cp "$CROSS/docker-machine/docker-machine" stage/docker-machine
           cp "$CROSS/lazydocker/lazydocker"        stage/lazydocker
-          cp -R "$MAVERICKS_BUILD_ROOT/container-tools-updater/container-tools-updater.app" stage/container-tools-updater.app
-          cp -R "$MAVERICKS_BUILD_ROOT/container-tools-menubar/DockerMenu.app" stage/DockerMenu.app
           find stage -name '._*' -delete 2>/dev/null || true
           tar -C stage -czf packaging-inputs.tgz .
           # Record what THIS job built from. The .pkg is assembled from two independent jobs -- these
@@ -241,6 +219,47 @@ jobs:
           path: |
             packaging-inputs.tgz
             build-info-macos.txt
+
+  # The Sparkle updater and the menu-bar app, x86_64 for 10.9, with clang22 and the pinned 10.9 SDK
+  # on Linux (cmake/build_apps.sh, which also runs on a Mac and on 10.9). On every run, so a PR that
+  # breaks either app fails here; the apps travel to package only when packaging.
+  build-apps:
+    needs: ver
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: The ver job succeeded
+        env:
+          VER_RESULT: ${{ needs.ver.result }}
+        run: '[ "$VER_RESULT" = success ] || { echo "::error::ver ended $VER_RESULT, so this build has no version to build"; exit 1; }'
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # the apps' version derives from UPSTREAM_VERSION and the shipped tags
+      - name: Install mavericks-shipyard
+        uses: Mavergreen/shipyard/.github/actions/install@v1
+      - name: Record the pre-build tree
+        run: sh "$SHIPYARD_SCRIPTS/assert-tree-clean.sh" --record
+      - name: Write the version this run builds
+        env:
+          VER: ${{ needs.ver.outputs.version }}
+        run: printf '%s\n' "$VER" > VERSION
+      - name: Build the updater (must not link docker) and the menu-bar app with clang22
+        run: sh cmake/build_apps.sh "$RUNNER_TEMP/apps"
+      - name: The build must not have written into the source tree
+        run: sh "$SHIPYARD_SCRIPTS/assert-tree-clean.sh"
+      - name: Stage the apps (packaging runs only)
+        if: needs.ver.outputs.package == 'true'
+        run: |
+          mkdir -p apps
+          cp -R "$RUNNER_TEMP/apps/container-tools-updater/container-tools-updater.app" apps/
+          cp -R "$RUNNER_TEMP/apps/container-tools-menubar/DockerMenu.app" apps/
+          tar -C apps -czf apps.tgz .   # one tarball, so the Mach-Os keep their executable bits
+      - name: Upload the apps (packaging runs only)
+        if: needs.ver.outputs.package == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: apps
+          path: apps.tgz
 
   # boot2docker.iso on native Linux/Docker (macos-26 can't build it). We only BUILD the iso here for the
   # .pkg; the source is digest-verified at clone time (clone_pinned.sh in the boot2docker DOWNLOAD_COMMAND
@@ -315,8 +334,10 @@ jobs:
   # Needs the mac binaries/updater and the iso; runs on macos-26 for pkgbuild/productbuild.
   package:
     if: needs.ver.outputs.package == 'true'
-    needs: [ver, build-macos, build-iso]
-    runs-on: macos-26
+    needs: [ver, build-macos, build-apps, build-iso]
+    # Linux: shipyard's packaging, signing and conformance seams are host-agnostic (stevedore), and
+    # clang22's llvm tools read the Mach-Os.
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
         with:
@@ -327,6 +348,13 @@ jobs:
         with: { name: packaging-inputs, path: dl }
       - uses: actions/download-artifact@v8
         with: { name: boot2docker-iso, path: iso }
+      - uses: actions/download-artifact@v8
+        with: { name: apps, path: dlapps }
+      - name: clang22's Mach-O readers, for the steps that read the pkg
+        run: |
+          set -eu
+          CL="$(sh cmake/fetch-clang22.sh)"
+          { echo "LIPO=$CL/bin/llvm-lipo"; echo "OTOOL=$CL/bin/llvm-otool"; echo "NM=$CL/bin/llvm-nm"; echo "STRINGS=$CL/bin/llvm-strings"; } >> "$GITHUB_ENV"
 
       # This job's checkout is fresh (a separate runner from build-macos), so it has no VERSION file.
       # Use the authoritative version the ver job decided (needs.ver.outputs.version), not
@@ -369,6 +397,7 @@ jobs:
           [ -d "$SHIPYARD_SCRIPTS" ] || { echo "::error::SHIPYARD_SCRIPTS not set by install@v1"; exit 1; }
           mkdir -p in dist
           tar -C in -xzf dl/packaging-inputs.tgz      # restores executable bits
+          tar -C in -xzf dlapps/apps.tgz
           PKG="dist/container-tools-$VER.pkg"
 
           sh cmake/package_pkg.sh --out "$PKG" --version "$VER" \
@@ -500,7 +529,7 @@ jobs:
   # repackage needs since a GITHUB_TOKEN-pushed tag triggers nothing.
   publish:
     if: needs.ver.outputs.publish == 'true'
-    needs: [ver, build-macos, package, scan, on-mavericks]
+    needs: [ver, build-macos, build-apps, package, scan, on-mavericks]
     permissions:
       contents: write
     uses: Mavergreen/shipyard/.github/workflows/publish-release.yml@v1

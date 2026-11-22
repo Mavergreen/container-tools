@@ -13,7 +13,9 @@ set(CMAKE_OSX_ARCHITECTURES x86_64 CACHE STRING "Intel-only (10.9)")
 project(ContainerToolsUpdater LANGUAGES OBJC)
 
 find_package(MavericksShipyard REQUIRED)
-include(Mavericks)          # universal umbrella: AppleClang gate + build conventions
+# clang22 on every host (cmake/build_apps.sh), like the rest of the family: no AppleClang gate.
+set(MAVERICKS_REQUIRE_APPLECLANG OFF)
+include(Mavericks)          # build conventions
 include(MavericksSparkle)   # the Sparkle updater .app builder
 
 # Single-source the version from the repo root (this project's source dir is updater/). Derived
