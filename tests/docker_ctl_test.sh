@@ -130,7 +130,8 @@ case_reclaimable() {
 }
 case_free_space() {
   setup; stub_dm_df Running '/dev/sda1 18668944 12460804 5219012 70% /mnt/sda1'; stub_docker_df
-  sh "$CTL" free-space >/dev/null || fail "free-space exit 0"
+  out=$(sh "$CTL" free-space) || fail "free-space exit 0"
+  [ "$(printf '%s\n' "$out" | tail -1)" = "18668944 12460804 5219012 ok" ] || fail "free-space prints the new disk line last, for the menu's toast (got: $out)"
   grep -q -- '--context mavericks image prune -a -f' "$DOCKER_LOG" || fail "free-space must remove unused images"
   grep -q -- '--context mavericks builder prune -f' "$DOCKER_LOG" || fail "free-space must remove build cache"
   if grep -E -e 'volume' -e 'container prune' -e 'system prune' "$DOCKER_LOG"; then
@@ -268,7 +269,8 @@ case_enlarge_disk_plan() {
 }
 case_enlarge_disk() {
   setup; stub_enlarge last 0
-  sh "$CTL" enlarge-disk >/dev/null || fail "enlarge-disk exit 0"
+  out=$(sh "$CTL" enlarge-disk) || fail "enlarge-disk exit 0"
+  [ "$(printf '%s\n' "$out" | tail -1)" = "49611072 9480476 37866540 ok" ] || fail "enlarge-disk prints the new disk line last, for the menu's toast (got: $out)"
   grep -q '^stop container-tools' "$DM_LOG" || fail "enlarge-disk must stop the VM before growing the vmdk"
   grep -qx "vdm -x 40GB $(VMDIR)/container-tools.vmdk \[Stopped\]" "$DM_LOG" || fail "vdiskmanager -x must grow the vmdk while the VM is stopped (got: $(grep vdm "$DM_LOG"))"
   grep -q '^start container-tools' "$DM_LOG" || fail "enlarge-disk must start the VM again"
@@ -512,6 +514,63 @@ case_no_cache_files() {
     no_caches || fail "$v must not write the menu's old cache files"
   done
   teardown
+}
+# Review fixes (2026-11-23).
+case_overview_disk_timeout_keeps_last() {
+  setup; stub_ready Running ok; stub_launchctl 0
+  cat > "$BIN/docker-machine" <<EOF
+#!/bin/sh
+case "\$1" in status) cat "$WORK/vmstate" ;; ssh) sleep 30 ;; esac
+exit 0
+EOF
+  chmod +x "$BIN/docker-machine"
+  out=$(ov --full)
+  printf '%s\n' "$out" | grep -q '^disk' && fail "a disk read that timed out leaves the line out, so the menu keeps the last value (got: $out)"
+  teardown
+}
+case_overview_local_checks_first() {
+  setup; stub_ready Running ok; stub_launchctl 0
+  cat > "$BIN/docker-machine" <<EOF
+#!/bin/sh
+[ "\$1" = status ] && sleep 30
+exit 0
+EOF
+  chmod +x "$BIN/docker-machine"
+  mkdir -p "$MAVERICKS_DOCKER_STATE_DIR/op.lock"  # portability-ok: pre-creates a held lock for the test; no race
+  echo stop > "$MAVERICKS_DOCKER_STATE_DIR/op.lock/name"; echo $$ > "$MAVERICKS_DOCKER_STATE_DIR/op.lock/pid"
+  t0=$(date +%s); st=$(ov_field state)
+  [ "$st" = working:stop ] || fail "an op in progress -> working:stop (got: $st)"
+  [ $(( $(date +%s) - t0 )) -le 2 ] || fail "local checks (op lock, paused VM) come before asking docker-machine"
+  rm -rf "$MAVERICKS_DOCKER_STATE_DIR/op.lock"
+  export MAVERICKS_DOCKER_MACHDIR="$WORK/machines"; vl="$MAVERICKS_DOCKER_MACHDIR/container-tools"; mkdir -p "$vl"
+  echo "$(date '+%Y-%m-%dT%H:%M:%S').000-05:00| vmx| msg.hbacommon.outofspace" > "$vl/vmware.log"
+  printf '#!/bin/sh\necho 4242\n' > "$BIN/pgrep"; chmod +x "$BIN/pgrep"   # a vmx is up
+  t0=$(date +%s); st=$(ov_field state)
+  [ "$st" = host-disk-full ] || fail "a paused VM -> host-disk-full (got: $st)"
+  [ $(( $(date +%s) - t0 )) -le 2 ] || fail "a paused VM must not wait on a hung docker-machine status"
+  teardown
+}
+case_overview_slow_docker_is_running() {
+  setup; stub_ready Running ok; stub_launchctl 0
+  cat > "$BIN/docker" <<EOF
+#!/bin/sh
+case "\$*" in *" info"*) sleep 4; echo 23.0.6 ;; esac
+exit 0
+EOF
+  chmod +x "$BIN/docker"
+  [ "$(ov_field state)" = running ] || fail "a Docker that answers in 4 s (a cold docker info on 10.9) is running, not finishing setup"
+  teardown
+}
+case_ensure_ready_retries_refused_boot() {
+  setup; stub_ready Stopped down; stub_launchctl 0
+  echo "needs 9 GB" > "$MAVERICKS_DOCKER_STATE_DIR/boot-refused" 2>/dev/null || { mkdir -p "$MAVERICKS_DOCKER_STATE_DIR"; echo "needs 9 GB" > "$MAVERICKS_DOCKER_STATE_DIR/boot-refused"; }
+  out=$(sh "$CTL" ensure-ready --wait-seconds 5) || fail "with room again, ensure-ready must boot past an old refusal (got: $out)"
+  grep -q '^bootstrap' "$DM_LOG" || fail "ensure-ready runs the bootstrap, which re-checks room"
+  teardown
+}
+case_smoke_reads_no_state_file() {
+  grep -q 'cat "$STATE"' "$ROOT/tests/smoke-mavericks.sh" && fail "smoke-mavericks.sh must not read the removed state file"
+  return 0
 }
 case_stop_marks_user_stopped() {
   setup; stub_dm Stopped
@@ -845,4 +904,9 @@ case_overview_api_hang_is_bounded
 case_overview_dm_hang_is_bounded
 case_start_clears_boot_refused
 case_no_cache_files
+case_overview_disk_timeout_keeps_last
+case_overview_local_checks_first
+case_overview_slow_docker_is_running
+case_ensure_ready_retries_refused_boot
+case_smoke_reads_no_state_file
 echo "docker_ctl_test: OK"

@@ -44,7 +44,6 @@ runs "docker-machine --version"     'docker-machine version' "$B/docker-machine"
 runs "lazydocker --version"         'Version'                "$B/lazydocker" --version
 
 # The shell helpers run under 10.9's own /bin/sh and tools, against a machine with no VM.
-STATE="$HOME/Library/Application Support/Mavergreen/container-tools/state"
 "$B/docker-machine-ctl" status > "$OUT" 2>&1 || fail "docker-machine-ctl status exited non-zero"
 case "$(cat "$OUT")" in
   running|stopped|absent|creating|no-fusion|host-disk-full|error|working:*) echo "ok: docker-machine-ctl status ($(cat "$OUT"))" ;;
@@ -58,7 +57,8 @@ echo "ok: container-tools-sync-image"
 if [ ! -d "/Applications/VMware Fusion.app" ] && ! command -v vmrun >/dev/null 2>&1; then
   # The guest has no Fusion, so the login agent's bootstrap must stand down and say so, not fail.
   MAVERICKS_DOCKER_NONINTERACTIVE=1 "$B/docker-machine-bootstrap" > "$OUT" 2>&1 || fail "docker-machine-bootstrap exited non-zero"
-  [ "$(cat "$STATE" 2>/dev/null)" = no-fusion ] || fail "without VMware Fusion, bootstrap must announce no-fusion (state: $(cat "$STATE" 2>/dev/null))"
+  _st=$("$B/docker-machine-ctl" status 2>/dev/null)
+  [ "$_st" = no-fusion ] || fail "without VMware Fusion, docker-machine-ctl status must say no-fusion (got: $_st)"
   echo "ok: docker-machine-bootstrap without VMware Fusion -> no-fusion"
 fi
 

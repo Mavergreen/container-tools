@@ -180,15 +180,20 @@ host_room_to_boot() {
 }
 
 # The single word the state file / menu bar cares about.
-status_word() { _status_from "$(machine_status)"; }
-# The word for a given docker-machine status (asked once by the caller, so overview_status can bound
-# it). A boot the login agent refused for want of room is remembered in BOOT_REFUSED: nothing else
-# can tell it from a plain stop, and the menu must keep saying why the VM is down.
+status_word() { _local_status || _status_from "$(machine_status)"; }
+# What the Mac alone can tell, without asking docker-machine (which waits while VMware has the VM
+# paused): prints the word and succeeds, or prints nothing and fails.
+_local_status() {
+  fusion_present || { echo no-fusion; return 0; }
+  host_disk_full && { echo host-disk-full; return 0; }
+  create_in_progress && { echo creating; return 0; }
+  op_in_progress && { echo "working:$(op_name)"; return 0; }
+  return 1
+}
+# The word for a docker-machine status, once _local_status had nothing to say. A boot the login
+# agent refused for want of room is remembered in BOOT_REFUSED: nothing else can tell it from a
+# plain stop, and the menu must keep saying why the VM is down.
 _status_from() { # docker-machine status
-  fusion_present || { echo no-fusion; return; }
-  host_disk_full && { echo host-disk-full; return; }
-  create_in_progress && { echo creating; return; }
-  op_in_progress && { echo "working:$(op_name)"; return; }
   case "$1" in
     Running) echo running ;;
     Stopped) if [ -e "$BOOT_REFUSED" ]; then echo host-disk-full; else echo stopped; fi ;;
@@ -343,8 +348,9 @@ enlarge_disk() { # [new GB]
   else
     log "enlarge-disk: the VM didn't come back up"; _rc=1
   fi
-  log "enlarge-disk: disk now $(disk_refresh)"
+  _d=$(disk_refresh); log "enlarge-disk: disk now $_d"
   op_end
+  echo "$_d"   # last line: the new disk, for the menu's toast
   return $_rc
 }
 
@@ -414,13 +420,16 @@ _disk_line() { # secs
 OVERVIEW_VERSION=1
 overview_status() { # [--full]
   rm -f "$STATE_DIR/state" "$STATE_DIR/readiness" "$STATE_DIR/disk" 2>/dev/null || true   # pre-overview caches
-  _ms=$(machine_status_bounded 5)   # usually ~1 s, but a cold first call on 10.9 can take 3+
-  _w=$(_status_from "$_ms")
+  # The local checks first: a paused VM or a running op must not wait on docker-machine.
+  # Its status takes ~1 s, but a cold first call on 10.9 can take 3+.
+  _w=$(_local_status) || _w=$(_status_from "$(machine_status_bounded 5)")
   _disk=
   case "$_w" in
     running)
-      _a=$(api_state 3); [ "$_a" = ready ] || _w=$_a
-      if [ "${1:-}" = --full ]; then _disk=$(_disk_line 2); case "$_disk" in ""|timeout) _disk=unknown ;; esac; fi ;;
+      _a=$(api_state 5); [ "$_a" = ready ] || _w=$_a   # a cold docker info on 10.9 can take 3+ s
+      if [ "${1:-}" = --full ]; then   # a read that timed out leaves the line out: keep the last value
+        _disk=$(_disk_line 4); case "$_disk" in "") _disk=unknown ;; timeout) _disk= ;; esac
+      fi ;;
     working:*|creating) ;;
     *) _disk=unknown ;;
   esac
@@ -443,6 +452,8 @@ readiness_state() { # [secs]
 # needs-attention won't fix itself, so it returns at once instead of waiting out the budget.
 ensure_ready() { # secs
   _end=$(( $(date +%s) + $1 )); _booted=no; _next_sync=0
+  # A boot the login agent refused earlier: retry now if the Mac has room again, not at its next tick.
+  if [ -e "$BOOT_REFUSED" ] && host_room_to_boot; then clear_boot_refused; fi
   while :; do
     _w=$(status_word)
     case "$_w" in

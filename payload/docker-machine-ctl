@@ -60,8 +60,9 @@ case "${1:-}" in
     _rc=0
     docker --context "$CONTEXT" image prune -a -f >>"$LOG" 2>&1 || _rc=$?
     docker --context "$CONTEXT" builder prune -f >>"$LOG" 2>&1 || _rc=$?
-    disk_refresh >/dev/null
+    _d=$(disk_refresh)
     op_end
+    echo "$_d"   # the new disk, for the menu's toast
     exit $_rc ;;
   # What the login agent's tick runs on a low disk (see auto_free_space); fails while another op runs.
   auto-free) auto_free_space ;;

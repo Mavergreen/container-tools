@@ -12,7 +12,6 @@
 @property (assign) BOOL fetching;            // an overview-status is running
 @property (assign) BOOL fetchAgain;          // something changed while it ran: ask once more after
 @property (strong) NSDate *lastFull;         // when overview-status --full (the image check) last ran
-@property (strong) NSMutableArray *afterNext; // blocks to run once the next overview is applied
 @end
 
 // How often to ask again: quickly while things are changing, rarely when steady (a change made
@@ -31,7 +30,6 @@ static const NSTimeInterval kFastSecs = 2, kSlowSecs = 30;
     [[NSUserDefaults standardUserDefaults] setBool:YES forKey:kSeeded];
   }
 
-  self.afterNext = [NSMutableArray array];
   [self render];   // "Checking Docker…" until the first overview arrives
   __weak AppDelegate *weak = self;
   self.watchers = [[MDWatchers alloc] initWithOnChange:^{ [weak requestOverview]; }];
@@ -58,8 +56,6 @@ static BOOL isChanging(NSString *s) {
     if (o) { self.overview = o; if (full) self.lastFull = [NSDate date]; }
     self.fetching = NO;
     [self render];
-    NSArray *after = [self.afterNext copy]; [self.afterNext removeAllObjects];
-    for (void (^b)(void) in after) b();
     if (self.fetchAgain) { self.fetchAgain = NO; [self requestOverview]; return; }
     [self.watchers scheduleNextIn:(isChanging(self.overview.state) ? kFastSecs : kSlowSecs)];
   }];
@@ -173,13 +169,13 @@ static BOOL isChanging(NSString *s) {
 }
 
 - (void)runAndRefresh:(NSString *)verb {
-  NSImage *icon = [self iconForState:@"working"];
+  NSImage *icon = [self iconForState:@"working:"];
   icon.template = YES;
   [self.statusItem setImage:icon];
   [self.controller runVerb:verb completion:^(NSString *out, int code) {
-    // After the next overview, so a toast that quotes the disk quotes the new numbers.
-    __weak AppDelegate *weak = self;
-    [self.afterNext addObject:[^{ [weak notifyForVerb:verb code:code]; } copy]];
+    [self notifyForVerb:verb code:code out:out];
+    // These change the disk: make the next overview a full one, so the badge follows at once.
+    if ([verb isEqualToString:@"free-space"] || [verb isEqualToString:@"enlarge-disk"]) self.lastFull = nil;
     [self requestOverview];
   }];
 }
@@ -188,7 +184,9 @@ static BOOL isChanging(NSString *s) {
 // never toast. image-upgrade is the one long op that reports a meaningful exit code, so it is the
 // only success toast; the quick verbs stay silent on success (the icon settles immediately) and
 // only speak up on failure. setup is excluded entirely (its exec of bootstrap returns 0 at once).
-- (void)notifyForVerb:(NSString *)verb code:(int)code {
+- (void)notifyForVerb:(NSString *)verb code:(int)code out:(NSString *)out {
+  // free-space and enlarge-disk print the new disk line last; the toast quotes it.
+  NSString *newDisk = [[out componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]] lastObject];
   BOOL ok = (code == 0);
   if ([verb isEqualToString:@"image-upgrade"]) {
     if (ok) [self notifyTitle:@"Container Tools" text:@"VM image updated."];
@@ -196,7 +194,7 @@ static BOOL isChanging(NSString *s) {
     return;
   }
   if ([verb isEqualToString:@"free-space"]) {
-    if (ok) [self notifyTitle:@"Container Tools" text:[self diskLineForState:@"running"]];
+    if (ok) [self notifyTitle:@"Container Tools" text:[self diskLineFrom:newDisk]];
     else    [self notifyTitle:@"Container Tools" text:@"Freeing up space failed — see Show Log."];
     return;
   }
@@ -206,7 +204,7 @@ static BOOL isChanging(NSString *s) {
     return;
   }
   if ([verb isEqualToString:@"enlarge-disk"]) {
-    if (ok) [self notifyTitle:@"Container Tools" text:[self diskLineForState:@"running"]];
+    if (ok) [self notifyTitle:@"Container Tools" text:[self diskLineFrom:newDisk]];
     else    [self notifyTitle:@"Container Tools" text:@"Enlarging the VM disk failed — see Show Log."];
     return;
   }
@@ -241,7 +239,10 @@ static BOOL isChanging(NSString *s) {
 // "Disk: 5.2 GB free of 19.1 GB", from the latest overview.
 - (NSString *)diskLineForState:(NSString *)state {
   if (![state isEqualToString:@"running"]) return @"Disk: unknown (Docker stopped)";
-  NSArray *f = [(self.overview.disk ?: @"unknown") componentsSeparatedByString:@" "];
+  return [self diskLineFrom:self.overview.disk];
+}
+- (NSString *)diskLineFrom:(NSString *)disk {   // "<total KB> <used KB> <avail KB> ok|low"
+  NSArray *f = [(disk ?: @"unknown") componentsSeparatedByString:@" "];
   if (f.count != 4) return @"Disk: unknown";
   NSString *free = [NSByteCountFormatter stringFromByteCount:[f[2] longLongValue] * 1024
                                                   countStyle:NSByteCountFormatterCountStyleFile];

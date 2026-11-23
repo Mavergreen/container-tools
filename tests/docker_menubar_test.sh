@@ -104,4 +104,7 @@ grep -q 'vmxPid\]' "$AD" && fail "no synchronous vmx-pid lookup on the refresh p
 grep -q 'shownState' "$AD" && fail "the app adds no state rules of its own (overview-status folds readiness in)"
 grep -q 'Checking Docker' "$AD" || fail "before the first overview the menu says Checking Docker…"
 grep -q 'MDOverview.m' "$M/CMakeLists.txt" || fail "MDOverview.m must be built"
+grep -q 'iconForState:@"working:"' "$AD" || fail "a menu action's instant icon must read as in progress (working:)"
+grep -q 'lastFull = nil' "$AD" || fail "after Free Up Space / Enlarge VM Disk, the next overview must be --full (fresh disk numbers)"
+grep -q 'kFetchTimeout' "$M/MDController.m" || fail "a hung overview-status must not freeze the menu: the app bounds each fetch"
 echo "docker_menubar_test: live-state OK"
