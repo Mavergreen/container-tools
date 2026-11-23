@@ -437,6 +437,59 @@ case_diagnostics() {
   case "$out" in *"BEGIN"*|*"PRIVATE"*) fail "diagnostics must never print key material" ;; esac
   teardown
 }
+# overview-status (2026-11-23): everything the menu shows, from one bounded call; no cache files.
+ov() { sh "$CTL" overview-status "$@"; }
+ov_field() { ov | sed -n "s/^$1 //p"; }
+case_overview_status() {
+  setup; stub_ready Running ok; stub_launchctl 0
+  out=$(ov) || fail "overview-status exits 0"
+  [ "$(printf '%s\n' "$out" | head -1)" = "version 1" ] || fail "line 1 is 'version 1' (got: $out)"
+  printf '%s\n' "$out" | grep -q '^state running$' || fail "running + API ok -> state running (got: $out)"
+  printf '%s\n' "$out" | grep -q '^vmx-pid [0-9]*$' || fail "a vmx-pid line (got: $out)"
+  printf '%s\n' "$out" | grep -q '^login on$' || fail "login on (got: $out)"
+  printf '%s\n' "$out" | grep -q '^disk ' || fail "a disk line when running (got: $out)"
+  ov --full | grep -q '^image ' || fail "--full adds the image line"
+  echo tls > "$WORK/api";  [ "$(ov_field state)" = needs-attention ] || fail "unknown authority -> needs-attention"
+  echo down > "$WORK/api"; [ "$(ov_field state)" = finishing-setup ] || fail "API not answering -> finishing-setup"
+  echo Stopped > "$WORK/vmstate"
+  [ "$(ov_field state)" = stopped ] || fail "stopped VM -> state stopped"
+  [ "$(ov_field disk)" = unknown ] || fail "stopped VM -> disk unknown"
+  : > "$MAVERICKS_DOCKER_STATE_DIR/boot-refused"
+  [ "$(ov_field state)" = host-disk-full ] || fail "a remembered boot refusal on a stopped VM -> host-disk-full"
+  rm -f "$MAVERICKS_DOCKER_STATE_DIR/boot-refused"
+  echo Running > "$WORK/vmstate"; echo ok > "$WORK/api"; : > "$DOCKER_LOG"
+  mkdir -p "$MAVERICKS_DOCKER_STATE_DIR/op.lock"  # portability-ok: pre-creates a held lock for the test; no race
+  echo stop > "$MAVERICKS_DOCKER_STATE_DIR/op.lock/name"; echo $$ > "$MAVERICKS_DOCKER_STATE_DIR/op.lock/pid"
+  out=$(ov)
+  printf '%s\n' "$out" | grep -q '^state working:stop$' || fail "an op in progress -> working:<op> (got: $out)"
+  printf '%s\n' "$out" | grep -q '^disk ' && fail "no disk line while an op holds the VM (keep the last value)"
+  grep -q ' info' "$DOCKER_LOG" && fail "no Docker probe while an op holds the VM"
+  rm -rf "$MAVERICKS_DOCKER_STATE_DIR/op.lock"
+  for f in state readiness disk; do echo x > "$MAVERICKS_DOCKER_STATE_DIR/$f"; done
+  ov >/dev/null
+  for f in state readiness disk; do [ -e "$MAVERICKS_DOCKER_STATE_DIR/$f" ] && fail "overview-status removes the old $f cache file"; done
+  teardown
+}
+case_overview_api_hang_is_bounded() {
+  setup; stub_ready Running hang; stub_launchctl 0
+  t0=$(date +%s); st=$(ov_field state)
+  [ $(( $(date +%s) - t0 )) -le 6 ] || fail "overview-status must finish within ~5 s on a hung API"
+  [ "$st" = finishing-setup ] || fail "a hung API -> finishing-setup (got: $st)"
+  teardown
+}
+case_overview_dm_hang_is_bounded() {
+  setup; stub_ready Running ok; stub_launchctl 0
+  cat > "$BIN/docker-machine" <<EOF
+#!/bin/sh
+[ "\$1" = status ] && sleep 30
+exit 0
+EOF
+  chmod +x "$BIN/docker-machine"
+  t0=$(date +%s); st=$(ov_field state)
+  [ $(( $(date +%s) - t0 )) -le 6 ] || fail "overview-status must finish within ~5 s when docker-machine hangs"
+  [ "$st" = error ] || fail "docker-machine not answering -> error (got: $st)"
+  teardown
+}
 case_stop_marks_user_stopped() {
   setup; stub_dm Stopped
   MAVERICKS_DOCKER_BOOT_ID=boot-A sh "$CTL" stop >/dev/null || fail "stop exit 0"
@@ -764,4 +817,7 @@ case_setup
 case_packaging
 case_release_concurrency
 case_resource_status
+case_overview_status
+case_overview_api_hang_is_bounded
+case_overview_dm_hang_is_bounded
 echo "docker_ctl_test: OK"

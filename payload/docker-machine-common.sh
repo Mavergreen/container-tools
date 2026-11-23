@@ -185,18 +185,24 @@ host_room_to_boot() {
 }
 
 # The single word the state file / menu bar cares about.
-status_word() {
+status_word() { _status_from "$(machine_status)"; }
+# The word for a given docker-machine status (asked once by the caller, so overview_status can bound
+# it). A boot the login agent refused for want of room is remembered in BOOT_REFUSED: nothing else
+# can tell it from a plain stop, and the menu must keep saying why the VM is down.
+_status_from() { # docker-machine status
   fusion_present || { echo no-fusion; return; }
   host_disk_full && { echo host-disk-full; return; }
   create_in_progress && { echo creating; return; }
   op_in_progress && { echo "working:$(op_name)"; return; }
-  case "$(machine_status)" in
+  case "$1" in
     Running) echo running ;;
-    Stopped) echo stopped ;;
+    Stopped) if [ -e "$BOOT_REFUSED" ]; then echo host-disk-full; else echo stopped; fi ;;
     "")      echo absent ;;
     *)       echo error ;;
   esac
 }
+BOOT_REFUSED="$STATE_DIR/boot-refused"   # the login agent refused to boot: the Mac lacks room (GB needed)
+clear_boot_refused() { rm -f "$BOOT_REFUSED" 2>/dev/null || true; }
 
 # The VM's disk, for the menu: "<total KB> <used KB> <avail KB> ok|low", or "unknown" when the VM is
 # not running or df can't be read. Docker's data lives on /mnt/sda1. "low" is 90% used, counted the
@@ -386,6 +392,51 @@ api_state() { # secs  -- for a running VM: ready | finishing-setup | needs-atten
   else _a=finishing-setup; fi
   [ "$_e" = /dev/null ] || mv -f "$_e" "$API_ERR_FILE" 2>/dev/null || rm -f "$_e"
   echo "$_a"
+}
+# docker-machine status, given up after secs (prints "timeout"): a wedged VM makes every
+# docker-machine command wait. Into a file, not a $(...) pipe, as in api_state.
+machine_status_bounded() { # secs
+  mkdir -p "$STATE_DIR" 2>/dev/null || true
+  _mo=$(mktemp "$STATE_DIR/ms-out.XXXXXX") || { machine_status; return; }
+  _with_timeout "$1" docker-machine status "$MACHINE" >"$_mo" 2>/dev/null </dev/null
+  if [ $? -eq 124 ]; then echo timeout; else cat "$_mo"; fi
+  rm -f "$_mo"
+}
+# The VM disk line, as disk_refresh reads it, given up after secs (prints nothing then).
+_disk_line() { # secs
+  _do=$(mktemp "$STATE_DIR/disk-out.XXXXXX") || return 0
+  _with_timeout "$1" docker-machine ssh "$MACHINE" df -P /mnt/sda1 >"$_do" 2>/dev/null </dev/null
+  _dr=$?
+  awk '
+    NR == 2 && $2 ~ /^[0-9]+$/ && $3 ~ /^[0-9]+$/ && $4 ~ /^[0-9]+$/ && $3 + $4 > 0 {
+      printf "%s %s %s %s\n", $2, $3, $4, ($3 * 100 >= 90 * ($3 + $4)) ? "low" : "ok" }' "$_do"
+  rm -f "$_do"
+  [ "$_dr" -ne 124 ] || echo timeout
+}
+# Everything the menu shows, in one call bounded to about 5 s, as "key value" lines after a version
+# line. The menu renders this and adds nothing of its own. "state" folds readiness into running
+# (finishing-setup / needs-attention). Docker and the VM's disk are asked only when the VM is up and
+# no op holds it; an omitted line means "keep what you had". --full adds the image line, which hashes
+# two ISOs: the menu asks for it on its slow cadence, not every 2 s.
+OVERVIEW_VERSION=1
+overview_status() { # [--full]
+  rm -f "$STATE_DIR/state" "$STATE_DIR/readiness" "$STATE_DIR/disk" 2>/dev/null || true   # pre-overview caches
+  _ms=$(machine_status_bounded 3)
+  _w=$(_status_from "$_ms")
+  _disk=
+  case "$_w" in
+    running)
+      _a=$(api_state 3); [ "$_a" = ready ] || _w=$_a
+      _disk=$(_disk_line 2); case "$_disk" in ""|timeout) _disk=unknown ;; esac ;;
+    working:*|creating) ;;
+    *) _disk=unknown ;;
+  esac
+  echo "version $OVERVIEW_VERSION"
+  echo "state $_w"
+  [ -z "$_disk" ] || echo "disk $_disk"
+  _v=$(vmx_pid); echo "vmx-pid ${_v:-0}"
+  if launchctl list "$AGENT_LABEL" >/dev/null 2>&1; then echo "login on"; else echo "login off"; fi
+  [ "${1:-}" != --full ] || echo "image $(image_status)"
 }
 readiness_state() { # [secs]
   _w=$(status_word)
