@@ -1,7 +1,7 @@
 #!/bin/sh
 # platform: macOS-only -- launchctl controls the per-user login LaunchAgent, and it sources docker-machine-common.sh (osascript, BSD stat -f)
 # docker-machine-ctl — the command surface the menu-bar app drives. Sources the shared
-# helpers; every state-changing verb re-announces via write_state.
+# helpers; every state-changing verb announces (a notification the menu answers with overview-status).
 set -u
 . "${MAVERICKS_DOCKER_COMMON:-/usr/local/mavergreen/container-tools/libexec/docker-machine-common.sh}"
 
@@ -11,7 +11,7 @@ _run_and_announce() { # docker-machine subcommand
   # A start/restart can bring the VM up on a new DHCP IP; re-point the context so the menu path
   # self-heals too (not only the login-agent timer). Only once the VM is actually up.
   case "$1" in start|restart) [ "$(machine_status)" = Running ] && sync_context ;; esac
-  write_state "$(status_word)"
+  announce
   return $_rc
 }
 
@@ -23,12 +23,12 @@ _refuse_without_room() { # verb  -- end the op and fail if the Mac can't fit the
 }
 
 case "${1:-}" in
-  status)  _w=$(status_word); write_state "$_w"; echo "$_w" ;;
-  start)   clear_user_stopped; op_begin start; _refuse_without_room start; _run_and_announce start; _rc=$?; op_end; exit $_rc ;;
+  status)  status_word ;;
+  start)   clear_user_stopped; clear_boot_refused; op_begin start; _refuse_without_room start; _run_and_announce start; _rc=$?; op_end; exit $_rc ;;
   stop)    op_begin stop; _run_and_announce stop; _rc=$?
            [ "$_rc" -eq 0 ] && mark_user_stopped
            op_end; exit $_rc ;;
-  restart) clear_user_stopped; op_begin restart; _run_and_announce restart; _rc=$?; op_end; exit $_rc ;;
+  restart) clear_user_stopped; clear_boot_refused; op_begin restart; _run_and_announce restart; _rc=$?; op_end; exit $_rc ;;
   image-status) image_status ;;
   resource-status) resource_status ;;
   # Roll the VM onto the freshly-installed boot2docker.iso. Repoint first (a migrated host's stale

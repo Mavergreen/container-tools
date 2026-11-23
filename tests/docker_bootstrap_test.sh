@@ -23,6 +23,8 @@ setup() {
   export DM_LOG="$WORK/dm.args"; : > "$DM_LOG"
   export DOCKER_LOG="$WORK/docker.args"; : > "$DOCKER_LOG"
   export OSA_LOG="$WORK/osa.args"; : > "$OSA_LOG"
+  export NOTIFY_LOG="$WORK/notify.args"; : > "$NOTIFY_LOG"
+  printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "%s"\n' "$NOTIFY_LOG" > "$BIN/notifyutil"; chmod +x "$BIN/notifyutil"
   OLDPATH=$PATH; PATH="$BIN:$PATH"
   # osascript stub: record args (used for notifications + Terminal)
   cat > "$BIN/osascript" <<EOF
@@ -32,6 +34,12 @@ EOF
   chmod +x "$BIN/osascript"
 }
 teardown() { PATH=$OLDPATH; rm -rf "$WORK"; }
+# The shell no longer writes the menu's cache files (2026-11-23): it posts a notification and the
+# menu asks overview-status. announced = a change notification went out; sw = announced + the word.
+NOTE=dev.mavergreen.container-tools.changed
+announced() { grep -q -- "-p $NOTE" "$NOTIFY_LOG"; }
+sw() { announced || { echo NOT-ANNOUNCED; return; }; ( . "${MAVERICKS_DOCKER_COMMON:-$COMMON}"; status_word ); }
+no_caches() { for _f in state readiness disk; do [ -e "$MAVERICKS_DOCKER_STATE_DIR/$_f" ] && return 1; done; return 0; }
 
 # docker-machine stub: \$1 status -> echoes \$MAVERICKS_DOCKER_TEST_STATUS (empty => exit 1);
 # create/start/env recorded; env prints canned exports.
@@ -141,7 +149,7 @@ case_user_stopped_stays_stopped() {
   echo boot-A > "$MAVERICKS_DOCKER_STATE_DIR/user-stopped"
   MAVERICKS_DOCKER_BOOT_ID=boot-A sh "$BOOT" || fail "user-stopped tick should exit 0"
   [ -f "$WORK/started" ] && fail "the login agent restarted a VM the user stopped (the menu's Stop must stick)"
-  [ "$(cat "$MAVERICKS_DOCKER_STATE_DIR/state")" = stopped ] || fail "a user-stopped tick should announce 'stopped'"
+  [ "$(sw)" = stopped ] || fail "a user-stopped tick should announce 'stopped'"
   teardown
 }
 case_user_stopped_previous_boot() {
@@ -175,7 +183,7 @@ EOF
 case_tick_refreshes_disk() {
   setup; make_docker; stub_running_vm_df '/dev/sda1 18668944 12460804 5219012 70% /mnt/sda1'
   sh "$BOOT" || fail "tick should exit 0"
-  [ "$(cat "$MAVERICKS_DOCKER_STATE_DIR/disk")" = "18668944 12460804 5219012 ok" ] || fail "a running tick must refresh the disk cache"
+  no_caches || fail "the tick must not write the menu's cache files"
   grep -q 'almost full' "$OSA_LOG" && fail "a 70% disk must not notify"
   teardown
 }
@@ -204,7 +212,7 @@ exit 0
 EOF
   chmod +x "$BIN/docker"
   sh "$BOOT" || fail "tick should exit 0"
-  [ "$(cat "$MAVERICKS_DOCKER_STATE_DIR/readiness" 2>/dev/null)" = ready ] || fail "an answering API: the tick records ready (got: $(cat "$MAVERICKS_DOCKER_STATE_DIR/readiness" 2>/dev/null))"
+  announced || fail "the tick must announce"; no_caches || fail "the tick must not write a readiness file"
   cat > "$BIN/docker" <<EOF
 #!/bin/sh
 printf '%s\n' "\$*" >> "$DOCKER_LOG"
@@ -213,7 +221,7 @@ exit 0
 EOF
   chmod +x "$BIN/docker"
   sh "$BOOT" || fail "tick should exit 0"
-  [ "$(cat "$MAVERICKS_DOCKER_STATE_DIR/readiness")" = needs-attention ] || fail "unknown authority: the tick records needs-attention"
+  no_caches || fail "the tick must not write a readiness file"
   grep -q regenerate-certs "$DM_LOG" && fail "the tick must never regenerate certs by itself"
   teardown
 }
@@ -259,7 +267,7 @@ case_tick_auto_frees_low_disk() {
   grep -E -q -e 'volume' -e 'container prune' -e 'system prune' "$DOCKER_LOG" && fail "unattended pruning must never touch containers or volumes"
   [ -f "$WORK/violations" ] && fail "pruning must hold op.lock: $(cat "$WORK/violations")"
   [ -d "$MAVERICKS_DOCKER_STATE_DIR/op.lock" ] && fail "auto-free must release op.lock"
-  [ "$(cat "$MAVERICKS_DOCKER_STATE_DIR/disk")" = "18668944 12460804 5219012 ok" ] || fail "auto-free must refresh the disk cache"
+  no_caches || fail "auto-free must not write the disk cache"
   grep -q 'almost full' "$OSA_LOG" && fail "no notification when auto-free brought the disk back from low"
   grep -q 'auto-free' "$MAVERICKS_DOCKER_LOG" || fail "auto-free must say in the log what it did"
   teardown
@@ -514,7 +522,7 @@ case_packaging
 case_writes_state() {
   setup; make_dm; make_docker
   MAVERICKS_DOCKER_TEST_STATUS=Running sh "$BOOT" || fail "should exit 0"
-  [ "$(cat "$MAVERICKS_DOCKER_STATE_DIR/state" 2>/dev/null)" = running ] \
+  [ "$(MAVERICKS_DOCKER_TEST_STATUS=Running sw)" = running ] \
     || fail "bootstrap must write 'running' to the state file"
   teardown
 }
@@ -536,7 +544,7 @@ EOF
   printf 'stop\n' > "$MAVERICKS_DOCKER_STATE_DIR/op.lock/name"
   sh "$BOOT" || fail "should exit 0 when an op is in progress"
   [ -f "$WORK/started" ] && fail "bootstrap must NOT start the VM while an op holds op.lock"
-  [ "$(cat "$MAVERICKS_DOCKER_STATE_DIR/state" 2>/dev/null)" = "working:stop" ] \
+  [ "$(sw)" = "working:stop" ] \
     || fail "bootstrap must announce working:<op> while an op is in progress"
   teardown
 }
@@ -562,7 +570,7 @@ EOF
   printf 'image-upgrade\n' > "$MAVERICKS_DOCKER_STATE_DIR/op.lock/name"
   sh "$BOOT" || fail "should exit 0 when the host disk is full"
   [ -f "$WORK/started" ] && fail "bootstrap must NOT start a VM VMware has paused"
-  [ "$(cat "$MAVERICKS_DOCKER_STATE_DIR/state" 2>/dev/null)" = host-disk-full ] \
+  [ "$(sw)" = host-disk-full ] \
     || fail "bootstrap must announce host-disk-full"
   grep -q "display notification.*Mac's disk" "$OSA_LOG" || fail "bootstrap must notify that the Mac's disk is full"
   teardown
@@ -585,9 +593,15 @@ EOF
   chmod +x "$BIN/docker-machine"
   sh "$BOOT" || fail "should exit 0"
   [ -f "$WORK/started" ] && fail "bootstrap must NOT start a VM the Mac has no room to power on"
-  [ "$(cat "$MAVERICKS_DOCKER_STATE_DIR/state" 2>/dev/null)" = host-disk-full ] \
+  [ "$(sw)" = host-disk-full ] \
     || fail "bootstrap must announce host-disk-full when there is no room to start"
   grep -q "display notification.*GB free" "$OSA_LOG" || fail "bootstrap must say how much space starting needs"
+  [ -f "$MAVERICKS_DOCKER_STATE_DIR/boot-refused" ] || fail "the refusal must be remembered (boot-refused), so the menu keeps saying why"
+  printf '#!/bin/sh\necho "Filesystem 1024-blocks Used Available Capacity Mounted on"\necho "/dev/x 1 1 900000000 1%% /"\n' \
+    > "$BIN/df"; chmod +x "$BIN/df"
+  sh "$BOOT" || fail "should exit 0"
+  [ -f "$WORK/started" ] || fail "with room again, the tick starts the VM"
+  [ -f "$MAVERICKS_DOCKER_STATE_DIR/boot-refused" ] && fail "a start must forget the refusal"
   teardown
 }
 
@@ -607,7 +621,7 @@ case_space_in_state_dir() {
   setup; make_dm; make_docker
   export MAVERICKS_DOCKER_STATE_DIR="$WORK/state dir with spaces"
   MAVERICKS_DOCKER_TEST_STATUS=Running sh "$BOOT" || fail "should exit 0 with a spaced state dir"
-  [ "$(cat "$MAVERICKS_DOCKER_STATE_DIR/state" 2>/dev/null)" = running ] \
+  [ "$(MAVERICKS_DOCKER_TEST_STATUS=Running sw)" = running ] \
     || fail "state must be written into the spaced state dir"
   teardown
 }

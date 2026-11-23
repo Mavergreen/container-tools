@@ -22,11 +22,9 @@ CONTEXT=${MAVERICKS_DOCKER_CONTEXT:-mavericks}
 ISO=${MAVERICKS_DOCKER_ISO:-/usr/local/mavergreen/container-tools/share/boot2docker.iso}
 LOG=${MAVERICKS_DOCKER_LOG:-$HOME/Library/Logs/Mavergreen/container-tools/bootstrap.log}
 STATE_DIR=${MAVERICKS_DOCKER_STATE_DIR:-$HOME/Library/Application Support/Mavergreen/container-tools}
-STATE_FILE="$STATE_DIR/state"
 LOCK="$STATE_DIR/creating.lock"
 OP_LOCK="$STATE_DIR/op.lock"   # generic in-progress marker for the ctl verbs (start/stop/restart/image-upgrade)
 USER_STOPPED="$STATE_DIR/user-stopped"   # the menu's Stop, for this boot: the login agent leaves the VM down
-DISK_FILE="$STATE_DIR/disk"              # the VM disk line the menu shows (see disk_refresh)
 PROFILES=${MAVERICKS_DOCKER_PROFILES:-$HOME/.bash_profile $HOME/.profile $HOME/.zshrc $HOME/.bashrc}
 AGENT_LABEL=dev.mavergreen.container-tools-machine
 AGENT_PLIST=/Library/LaunchAgents/$AGENT_LABEL.plist
@@ -118,7 +116,7 @@ op_begin() { # name  — announce a long op: create the lock and mark the state 
   mkdir "$OP_LOCK" 2>/dev/null || true  # portability-ok: runs only on the Mac (BSD mkdir is atomic)
   printf '%s\n' "$_op" > "$OP_LOCK/name" 2>/dev/null || true
   printf '%s\n' "$$" > "$OP_LOCK/pid" 2>/dev/null || true
-  write_state "working:$_op"
+  announce
 }
 
 # Like op_begin, but takes op.lock atomically and fails while another op holds it, for the ops that
@@ -131,15 +129,12 @@ op_try_begin() { # name
   fi
   printf '%s\n' "$1" > "$OP_LOCK/name" 2>/dev/null || true
   printf '%s\n' "$$" > "$OP_LOCK/pid" 2>/dev/null || true
-  write_state "working:$1"
+  announce
 }
 
-op_end() { # release the lock and settle the state (and, for the menu, readiness) to the real machine's
+op_end() { # release the lock and tell the menu, which asks for the settled state itself
   rm -rf "$OP_LOCK" 2>/dev/null || true
-  # Readiness first: the menu re-reads it when the state file changes, and a stale "ready" from
-  # before a restart (or "needs-attention" from before a repair) would otherwise linger until the tick.
-  if [ "$(machine_status)" = Running ]; then record_readiness "$(api_state 10)"; else record_readiness "$(status_word)"; fi
-  write_state "$(status_word)"
+  announce
 }
 
 vmx_pid() { pgrep -f "machines/$MACHINE/.*\.vmx" 2>/dev/null | head -1 || true; }
@@ -208,7 +203,7 @@ clear_boot_refused() { rm -f "$BOOT_REFUSED" 2>/dev/null || true; }
 # not running or df can't be read. Docker's data lives on /mnt/sda1. "low" is 90% used, counted the
 # way df's Capacity is (used / (used + avail)). The disk filled silently once (2026-09-24: Linux
 # 1Password's container crash-looped with ENOSPC and nothing on the Mac said why). Cached in
-# DISK_FILE, atomically, so opening the menu never waits on the VM; prints what it wrote.
+# Prints the line; the menu gets its own copy from overview-status.
 disk_refresh() {
   _d=unknown
   if [ "$(machine_status)" = Running ]; then
@@ -217,8 +212,6 @@ disk_refresh() {
         printf "%s %s %s %s\n", $2, $3, $4, ($3 * 100 >= 90 * ($3 + $4)) ? "low" : "ok" }')
     [ -n "$_d" ] || _d=unknown
   fi
-  mkdir -p "$STATE_DIR" 2>/dev/null || true
-  printf '%s\n' "$_d" > "$DISK_FILE.tmp" 2>/dev/null && mv -f "$DISK_FILE.tmp" "$DISK_FILE" 2>/dev/null || true
   printf '%s\n' "$_d"
 }
 
@@ -238,7 +231,7 @@ auto_free_due() {
 auto_free_space() {
   op_try_begin auto-free || return 1
   date +%s > "$AUTO_FREE_STAMP" 2>/dev/null || true
-  log "auto-free: disk was $(cat "$DISK_FILE" 2>/dev/null || echo unknown); removing dangling images and build cache"
+  log "auto-free: disk is low; removing dangling images and build cache"
   _rc=0
   docker --context "$CONTEXT" image prune -f >>"$LOG" 2>&1 || _rc=$?
   docker --context "$CONTEXT" builder prune -f >>"$LOG" 2>&1 || _rc=$?
@@ -364,7 +357,6 @@ enlarge_disk() { # [new GB]
 # so that only happens when someone chooses Repair. The every-install cause of an unverifiable
 # daemon (create aborting before provisioning) is fixed in docker-machine itself (patch 0001).
 READINESS_VERSION=1
-READY_FILE="$STATE_DIR/readiness"   # the tick's latest readiness, for the menu
 API_ERR_FILE="$STATE_DIR/api-error" # the latest API probe's stderr, for diagnostics
 _with_timeout() { # secs cmd...  -- run cmd; kill it after secs (exit 124). No GNU timeout on 10.9.
   _s=$1; shift
@@ -442,10 +434,6 @@ readiness_state() { # [secs]
   _w=$(status_word)
   if [ "$_w" = running ]; then api_state "${1:-10}"; else echo "$_w"; fi
 }
-record_readiness() { # state  -- atomically, like write_state
-  mkdir -p "$STATE_DIR" 2>/dev/null || true
-  printf '%s\n' "$1" > "$READY_FILE.tmp" 2>/dev/null && mv -f "$READY_FILE.tmp" "$READY_FILE" 2>/dev/null || true
-}
 # Bring Docker to ready within secs, or say why not (exit 124 when the budget ran out). Starts a
 # stopped VM once, through the same noninteractive bootstrap the login agent runs, unless the user
 # stopped it this boot. It never creates an absent VM (that's `setup`, minutes long, and killing a
@@ -495,7 +483,7 @@ repair() {
   fi
   op_end
   _w=$(ensure_ready 60); _r=$?
-  record_readiness "$_w"; write_state "$(status_word)"   # the menu re-reads readiness on a state change
+  announce
   log "repair: $_w"
   echo "$_w"
   return $_r
@@ -512,11 +500,12 @@ diagnostics() {
   echo "log: $LOG"
 }
 
-write_state() {
-  # Atomic: write a temp then rename, so a reader (or the menu-bar app's kqueue watch)
-  # never sees a truncated/empty file mid-write. The watcher re-arms on the rename.
-  mkdir -p "$STATE_DIR" 2>/dev/null || true
-  printf '%s\n' "$1" > "$STATE_FILE.tmp" 2>/dev/null && mv -f "$STATE_FILE.tmp" "$STATE_FILE" 2>/dev/null || true
+# Tell the menu-bar app something changed; it asks overview-status for the rest. A Darwin
+# notification, so nothing is cached on disk to go stale. No notifyutil (Linux CI): nothing to tell.
+NOTIFY_NAME=dev.mavergreen.container-tools.changed
+announce() {
+  command -v notifyutil >/dev/null 2>&1 || return 0
+  notifyutil -p "$NOTIFY_NAME" >/dev/null 2>&1 || true
 }
 
 # Re-point the 'mavericks' docker context at the VM's current endpoint, healing the two ways a

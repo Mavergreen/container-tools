@@ -14,9 +14,17 @@ setup() {
   export MAVERICKS_DOCKER_STATE_DIR="$WORK/state"
   export MAVERICKS_DOCKER_LOG="$WORK/log"
   export MAVERICKS_DOCKER_FUSION_PRESENT=1
+  export NOTIFY_LOG="$WORK/notify.args"; : > "$NOTIFY_LOG"
+  printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "%s"\n' "$NOTIFY_LOG" > "$BIN/notifyutil"; chmod +x "$BIN/notifyutil"
   OLDPATH=$PATH; PATH="$BIN:$PATH"
 }
 teardown() { PATH=$OLDPATH; rm -rf "$WORK"; }
+# The shell no longer writes the menu's cache files (2026-11-23): it posts a notification and the
+# menu asks overview-status. announced = a change notification went out; sw = announced + the word.
+NOTE=dev.mavergreen.container-tools.changed
+announced() { grep -q -- "-p $NOTE" "$NOTIFY_LOG"; }
+sw() { announced || { echo NOT-ANNOUNCED; return; }; ( . "${MAVERICKS_DOCKER_COMMON:-$COMMON}"; status_word ); }
+no_caches() { for _f in state readiness disk; do [ -e "$MAVERICKS_DOCKER_STATE_DIR/$_f" ] && return 1; done; return 0; }
 stub_dm() { # $1 = status word the stub echoes ("" => exit 1)
   cat > "$BIN/docker-machine" <<EOF
 #!/bin/sh
@@ -43,10 +51,12 @@ case_creating() {
   teardown
 }
 
-case_write_state() {
+case_announce() {
   setup
-  ( . "$COMMON"; write_state running )
-  [ "$(cat "$MAVERICKS_DOCKER_STATE_DIR/state")" = running ] || fail "write_state must write the word"
+  ( . "$COMMON"; announce ) || fail "announce exits 0"
+  announced || fail "announce must post $NOTE"
+  no_caches || fail "announce writes no cache file"
+  : > "$NOTIFY_LOG"; ( PATH=/nonexistent; . "$COMMON"; announce ) || fail "announce without notifyutil must still exit 0"
   teardown
 }
 
@@ -93,15 +103,14 @@ case_image_status() {
 case_op_lock() {
   setup; stub_dm Running
   ( . "$COMMON"; op_begin image-upgrade )
-  [ "$(cat "$MAVERICKS_DOCKER_STATE_DIR/state")" = "working:image-upgrade" ] \
-    || fail "op_begin must write working:<op> to the state file"
+  [ "$(sw)" = "working:image-upgrade" ] || fail "op_begin must announce working:<op>"
   [ -d "$MAVERICKS_DOCKER_STATE_DIR/op.lock" ] || fail "op_begin must create op.lock"
   [ "$(cat "$MAVERICKS_DOCKER_STATE_DIR/op.lock/name")" = image-upgrade ] \
     || fail "op_begin must record the op name"
   ( . "$COMMON"; op_end )
   [ -d "$MAVERICKS_DOCKER_STATE_DIR/op.lock" ] && fail "op_end must remove op.lock"
-  [ "$(cat "$MAVERICKS_DOCKER_STATE_DIR/state")" = running ] \
-    || fail "op_end must write the real status back"
+  : > "$NOTIFY_LOG"; ( . "$COMMON"; op_end )
+  [ "$(sw)" = running ] || fail "op_end must announce the real status"
   teardown
 }
 
@@ -307,7 +316,7 @@ case_resource_status() {
 
 case_status_word
 case_creating
-case_write_state
+case_announce
 case_bindir_on_path
 case_image_status
 case_op_lock

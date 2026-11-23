@@ -18,9 +18,17 @@ setup() {
   export DM_LOG="$WORK/dm.args"; : > "$DM_LOG"
   export LC_LOG="$WORK/lc.args"; : > "$LC_LOG"
   export DOCKER_LOG="$WORK/docker.args"; : > "$DOCKER_LOG"
+  export NOTIFY_LOG="$WORK/notify.args"; : > "$NOTIFY_LOG"
+  printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "%s"\n' "$NOTIFY_LOG" > "$BIN/notifyutil"; chmod +x "$BIN/notifyutil"
   OLDPATH=$PATH; PATH="$BIN:$PATH"
 }
 teardown() { PATH=$OLDPATH; rm -rf "$WORK"; }
+# The shell no longer writes the menu's cache files (2026-11-23): it posts a notification and the
+# menu asks overview-status. announced = a change notification went out; sw = announced + the word.
+NOTE=dev.mavergreen.container-tools.changed
+announced() { grep -q -- "-p $NOTE" "$NOTIFY_LOG"; }
+sw() { announced || { echo NOT-ANNOUNCED; return; }; ( . "${MAVERICKS_DOCKER_COMMON:-$COMMON}"; status_word ); }
+no_caches() { for _f in state readiness disk; do [ -e "$MAVERICKS_DOCKER_STATE_DIR/$_f" ] && return 1; done; return 0; }
 
 stub_dm() { # $1 = status word
   cat > "$BIN/docker-machine" <<EOF
@@ -43,7 +51,7 @@ EOF
 case_status() {
   setup; stub_dm Running
   [ "$(sh "$CTL" status)" = running ] || fail "status running"
-  [ "$(cat "$MAVERICKS_DOCKER_STATE_DIR/state")" = running ] || fail "status writes state"
+  no_caches || fail "status writes no cache file"
   teardown
 }
 case_start_stop() {
@@ -61,7 +69,7 @@ UMARK() { echo "$MAVERICKS_DOCKER_STATE_DIR/user-stopped"; }
 
 # The VM's disk, for the menu: "<total KB> <used KB> <avail KB> ok|low", or "unknown". Read from df
 # inside the VM (docker's data lives on /mnt/sda1), "low" at 90% used the way df counts Capacity
-# (used / (used + avail)), and cached in $STATE_DIR/disk so opening the menu never waits on the VM.
+# (used / (used + avail)); the menu gets it from overview-status.
 stub_dm_df() { # $1 = status word, $2 = df's data line (empty: ssh fails)
   cat > "$BIN/docker-machine" <<EOF
 #!/bin/sh
@@ -76,11 +84,10 @@ exit 0
 EOF
   chmod +x "$BIN/docker-machine"
 }
-DISKF() { echo "$MAVERICKS_DOCKER_STATE_DIR/disk"; }
 case_disk_status_ok() {
   setup; stub_dm_df Running '/dev/sda1             18668944  12460804   5219012  70% /mnt/sda1'
   [ "$(sh "$CTL" disk-status)" = "18668944 12460804 5219012 ok" ] || fail "disk-status should report total/used/avail KB and ok at 70%"
-  [ "$(cat "$(DISKF)")" = "18668944 12460804 5219012 ok" ] || fail "disk-status must cache its answer for the menu"
+  no_caches || fail "disk-status writes no cache file"
   grep -q '^ssh container-tools df -P /mnt/sda1' "$DM_LOG" || fail "disk-status must read df of /mnt/sda1 inside the VM"
   teardown
 }
@@ -96,7 +103,7 @@ case_disk_status_unknown() {
   teardown
   setup; stub_dm_df Running ''
   [ "$(sh "$CTL" disk-status)" = unknown ] || fail "a failed df is unknown, not a number"
-  [ "$(cat "$(DISKF)")" = unknown ] || fail "an unknown disk must replace a stale cached number"
+  no_caches || fail "disk-status writes no cache file"
   teardown
 }
 
@@ -129,7 +136,7 @@ case_free_space() {
   if grep -E -e 'volume' -e 'container prune' -e 'system prune' "$DOCKER_LOG"; then
     fail "free-space must never remove containers or volumes"
   fi
-  [ "$(cat "$(DISKF)")" = "18668944 12460804 5219012 ok" ] || fail "free-space must refresh the cached disk numbers"
+  announced || fail "free-space must announce"; no_caches || fail "free-space writes no cache file"
   teardown
 }
 # auto-free: what the login agent's tick runs on a low disk, also callable by hand. Only dangling
@@ -142,7 +149,7 @@ case_auto_free() {
   grep -qx -- '--context mavericks builder prune -f' "$DOCKER_LOG" || fail "auto-free must remove build cache"
   grep -q -- 'prune -a\|--all\|volume\|container prune\|system prune' "$DOCKER_LOG" \
     && fail "auto-free must never remove tagged images, containers or volumes"
-  [ "$(cat "$(DISKF)")" = "18668944 12460804 5219012 ok" ] || fail "auto-free must refresh the cached disk numbers"
+  announced || fail "auto-free must announce"; no_caches || fail "auto-free writes no cache file"
   [ -s "$MAVERICKS_DOCKER_STATE_DIR/auto-free-last" ] || fail "auto-free must record when it ran"
   [ -d "$MAVERICKS_DOCKER_STATE_DIR/op.lock" ] && fail "auto-free must release op.lock"
   teardown
@@ -272,8 +279,8 @@ case_enlarge_disk() {
   [ "$(sed -n '/^vdm/=' "$DM_LOG")" -lt "$(sed -n '/resize2fs/=' "$DM_LOG")" ] || fail "partition grow after the vmdk grow"
   [ -f "$WORK/violations" ] && fail "$(cat "$WORK/violations")"
   [ -d "$MAVERICKS_DOCKER_STATE_DIR/op.lock" ] && fail "enlarge-disk must release op.lock"
-  [ "$(cat "$(DISKF)")" = "49611072 9480476 37866540 ok" ] || fail "enlarge-disk must refresh the cached disk numbers"
-  [ "$(cat "$MAVERICKS_DOCKER_STATE_DIR/state")" = running ] || fail "enlarge-disk must settle the state to running"
+  no_caches || fail "enlarge-disk writes no cache file"
+  [ "$(sw)" = running ] || fail "enlarge-disk must announce the settled state"
   teardown
 }
 case_enlarge_disk_refusals() {
@@ -417,7 +424,7 @@ case_repair() {
   grep -q -- '--client-certs' "$DM_LOG" && fail "repair must never rotate the shared client identity"
   grep -E -q '^(rm|create|kill)' "$DM_LOG" && fail "repair must never remove or recreate the VM"
   [ -d "$MAVERICKS_DOCKER_STATE_DIR/op.lock" ] && fail "repair must release op.lock"
-  [ "$(cat "$MAVERICKS_DOCKER_STATE_DIR/readiness")" = ready ] || fail "repair must record the new readiness for the menu (stale needs-attention otherwise)"
+  announced || fail "repair must announce"; no_caches || fail "repair writes no readiness file"
   teardown
   setup; stub_ready Running ok
   sh "$CTL" repair >/dev/null || fail "repair on a ready VM is fine"
@@ -488,6 +495,21 @@ EOF
   t0=$(date +%s); st=$(ov_field state)
   [ $(( $(date +%s) - t0 )) -le 6 ] || fail "overview-status must finish within ~5 s when docker-machine hangs"
   [ "$st" = error ] || fail "docker-machine not answering -> error (got: $st)"
+  teardown
+}
+case_start_clears_boot_refused() {
+  setup; stub_dm Stopped; stub_launchctl 0
+  echo 7 > "$MAVERICKS_DOCKER_STATE_DIR/boot-refused" 2>/dev/null || { mkdir -p "$MAVERICKS_DOCKER_STATE_DIR"; echo 7 > "$MAVERICKS_DOCKER_STATE_DIR/boot-refused"; }
+  sh "$CTL" start >/dev/null 2>&1 || :
+  [ -e "$MAVERICKS_DOCKER_STATE_DIR/boot-refused" ] && fail "the user's Start must forget the login agent's refusal"
+  teardown
+}
+case_no_cache_files() {
+  setup; stub_ready Running ok; stub_launchctl 0
+  for v in status start stop restart repair disk-status diagnostics overview-status; do
+    sh "$CTL" $v >/dev/null 2>&1 || :
+    no_caches || fail "$v must not write the menu's old cache files"
+  done
   teardown
 }
 case_stop_marks_user_stopped() {
@@ -659,7 +681,7 @@ case_image() {
   grep -q '^upgrade container-tools' "$DM_LOG" || fail "image-upgrade must call docker-machine upgrade"
   grep -q '^start container-tools' "$DM_LOG" || fail "image-upgrade must start the VM after upgrading"
   [ -d "$MAVERICKS_DOCKER_STATE_DIR/op.lock" ] && fail "image-upgrade must release op.lock"
-  [ "$(cat "$MAVERICKS_DOCKER_STATE_DIR/state")" = running ] || fail "image-upgrade must settle state to running"
+  [ "$(sw)" = running ] || fail "image-upgrade must announce the settled state"
   teardown
 }
 
@@ -712,7 +734,7 @@ case_start_announces() {
   setup; stub_dm Running
   sh "$CTL" start >/dev/null || fail "start exit 0"
   [ -d "$MAVERICKS_DOCKER_STATE_DIR/op.lock" ] && fail "start must release op.lock when done"
-  [ "$(cat "$MAVERICKS_DOCKER_STATE_DIR/state")" = running ] || fail "start must settle state to running"
+  [ "$(sw)" = running ] || fail "start must announce the settled state"
   teardown
 }
 
@@ -820,4 +842,6 @@ case_resource_status
 case_overview_status
 case_overview_api_hang_is_bounded
 case_overview_dm_hang_is_bounded
+case_start_clears_boot_refused
+case_no_cache_files
 echo "docker_ctl_test: OK"
