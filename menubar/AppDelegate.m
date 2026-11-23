@@ -2,15 +2,22 @@
 #import "MDController.h"
 #import "MDWatchers.h"
 #import "MDLoginItem.h"
+#import "MDOverview.h"
 
-@interface AppDelegate ()
+@interface AppDelegate () <NSMenuDelegate>
 @property (strong) NSStatusItem *statusItem;
 @property (strong) MDController *controller;
 @property (strong) MDWatchers *watchers;
-@property (assign) BOOL vmLoginOn;   // cached "Start Docker at login" state
-@property (assign) BOOL imageStale;  // cached: VM is on an older boot2docker.iso than installed
-@property (assign) BOOL diskLow;     // the running VM's disk is 90%+ used (from the disk cache)
+@property (strong) MDOverview *overview;   // what overview-status last said; nil until the first answer
+@property (assign) BOOL fetching;            // an overview-status is running
+@property (assign) BOOL fetchAgain;          // something changed while it ran: ask once more after
+@property (strong) NSDate *lastFull;         // when overview-status --full (the image check) last ran
+@property (strong) NSMutableArray *afterNext; // blocks to run once the next overview is applied
 @end
+
+// How often to ask again: quickly while things are changing, rarely when steady (a change made
+// outside our tools, such as Fusion's window, shows within that).
+static const NSTimeInterval kFastSecs = 2, kSlowSecs = 30;
 
 @implementation AppDelegate
 
@@ -24,56 +31,61 @@
     [[NSUserDefaults standardUserDefaults] setBool:YES forKey:kSeeded];
   }
 
-  [self refresh];
+  self.afterNext = [NSMutableArray array];
+  [self render];   // "Checking Docker…" until the first overview arrives
   __weak AppDelegate *weak = self;
-  self.watchers = [[MDWatchers alloc] initWithStatePath:self.controller.stateFilePath
-                                               onChange:^{ [weak refresh]; }];
+  self.watchers = [[MDWatchers alloc] initWithOnChange:^{ [weak requestOverview]; }];
   [self.watchers start];
+  [self requestOverview];
 }
 
-// Power says running, but Docker may not answer yet (finishing-setup) or at all (needs-attention):
-// show the tick's readiness instead, so "Running" is never shown for a Docker nobody can use.
-- (NSString *)shownState {
-  NSString *state = [self.controller currentState];
-  if (![state isEqualToString:@"running"]) return state;
-  NSString *r = [self.controller readiness];
-  if ([r isEqualToString:@"finishing-setup"] || [r isEqualToString:@"needs-attention"]) return r;
-  return state;
-}
 static BOOL isUp(NSString *s) {   // the VM is powered on, whatever Docker's readiness
   return [s isEqualToString:@"running"] || [s isEqualToString:@"finishing-setup"] ||
          [s isEqualToString:@"needs-attention"];
 }
+static BOOL isChanging(NSString *s) {
+  return s == nil || [s isEqualToString:@"finishing-setup"] || [s isEqualToString:@"creating"] ||
+         [s hasPrefix:@"working:"];
+}
 
-- (void)refresh {
-  NSString *state = [self shownState];
+// Ask overview-status, one at a time: a nudge that arrives while one runs asks once more after it.
+- (void)requestOverview {
+  if (self.fetching) { self.fetchAgain = YES; return; }
+  self.fetching = YES;
+  BOOL full = !self.lastFull || -[self.lastFull timeIntervalSinceNow] >= kSlowSecs;
+  [self.controller fetchOverviewFull:full completion:^(NSString *out) {
+    MDOverview *o = [MDOverview overviewFromOutput:out previous:self.overview];
+    if (o) { self.overview = o; if (full) self.lastFull = [NSDate date]; }
+    self.fetching = NO;
+    [self render];
+    NSArray *after = [self.afterNext copy]; [self.afterNext removeAllObjects];
+    for (void (^b)(void) in after) b();
+    if (self.fetchAgain) { self.fetchAgain = NO; [self requestOverview]; return; }
+    [self.watchers scheduleNextIn:(isChanging(self.overview.state) ? kFastSecs : kSlowSecs)];
+  }];
+}
+- (void)menuWillOpen:(NSMenu *)menu { [self requestOverview]; }
+
+- (BOOL)diskLow {
+  return isUp(self.overview.state) && [self.overview.disk hasSuffix:@" low"];
+}
+
+- (void)render {
+  NSString *state = self.overview.state;   // nil: no answer yet
   if ([state isEqualToString:@"no-fusion"]) [self maybePromptForFusion];
-  self.diskLow = isUp(state) && [[self.controller diskStatus] hasSuffix:@" low"];
   NSImage *icon = [self iconForState:state];
   icon.template = YES;
   [self.statusItem setImage:icon];
   [self.statusItem setToolTip:[self humanState:state]];
-  if (self.watchers)
-    [self.watchers watchVmxPid:(isUp(state) ? [self.controller vmxPid] : 0)];
+  [self.watchers watchVmxPid:(isUp(state) ? self.overview.vmxPid : 0)];
   [self rebuildMenuForState:state];
-  // Refresh the cached login state off the main thread; rebuild only if it changed.
-  [self.controller runVerb:@"login-status" completion:^(NSString *out, int code) {
-    BOOL on = [out isEqualToString:@"on"];
-    if (on != self.vmLoginOn) { self.vmLoginOn = on; [self rebuildMenuForState:[self shownState]]; }
-  }];
-  // Likewise the stale-image state. A package update refreshes the installed boot2docker.iso but the
-  // VM keeps booting its own older copy until `docker-machine upgrade`; when stale we offer the roll
-  // here (a reliable GUI session) rather than from the updater's flaky post-install dialog.
-  [self.controller runVerb:@"image-status" completion:^(NSString *out, int code) {
-    BOOL stale = [out isEqualToString:@"stale"];
-    if (stale != self.imageStale) { self.imageStale = stale; [self rebuildMenuForState:[self shownState]]; }
-  }];
 }
 
 - (NSString *)humanState:(NSString *)s {
   // In-progress states read as verb phrases ("Stopping Docker…"), deliberately dropping the
   // "Docker: " status-label prefix the steady states use ("Docker: Stopped") — the action, not
   // the status, is what's current. Keep the two shapes distinct on purpose.
+  if (s == nil) return @"Checking Docker…";
   if ([s hasPrefix:@"working:"]) {
     NSString *op = [s substringFromIndex:[@"working:" length]];
     if ([op isEqualToString:@"image-upgrade"]) return @"Updating VM image…";
@@ -98,6 +110,7 @@ static BOOL isUp(NSString *s) {   // the VM is powered on, whatever Docker's rea
 
 - (void)rebuildMenuForState:(NSString *)state {
   NSMenu *m = [[NSMenu alloc] init];
+  m.delegate = self;
 
   NSMenuItem *header = [m addItemWithTitle:[self humanState:state] action:NULL keyEquivalent:@""];
   header.enabled = NO;
@@ -115,7 +128,7 @@ static BOOL isUp(NSString *s) {   // the VM is powered on, whatever Docker's rea
     hint.enabled = NO;
   } else if ([state isEqualToString:@"absent"] || [state isEqualToString:@"error"]) {
     [m addItemWithTitle:@"Set Up / Repair…" action:@selector(doSetup:) keyEquivalent:@""];
-  } else if (![state isEqualToString:@"creating"] && ![state hasPrefix:@"working"]) {
+  } else if (state && ![state isEqualToString:@"creating"] && ![state hasPrefix:@"working"]) {
     if (isUp(state)) {
       if ([state isEqualToString:@"needs-attention"])
         [m addItemWithTitle:@"Repair Docker" action:@selector(doRepair:) keyEquivalent:@""];
@@ -128,7 +141,7 @@ static BOOL isUp(NSString *s) {   // the VM is powered on, whatever Docker's rea
     }
     // Offer the roll onto the freshly-installed image when the VM is behind (images/containers/volumes
     // are preserved — they live on a separate disk). Drives docker-machine-ctl image-upgrade.
-    if (self.imageStale)
+    if ([self.overview.image isEqualToString:@"stale"])
       [m addItemWithTitle:@"Update VM Image…" action:@selector(doImageUpgrade:) keyEquivalent:@""];
   }
 
@@ -140,7 +153,7 @@ static BOOL isUp(NSString *s) {   // the VM is powered on, whatever Docker's rea
   [m addItem:[NSMenuItem separatorItem]];
   NSMenuItem *vmLogin = [m addItemWithTitle:@"Start Docker at Login"
                                      action:@selector(toggleVMLogin:) keyEquivalent:@""];
-  vmLogin.state = self.vmLoginOn ? NSOnState : NSOffState;
+  vmLogin.state = [self.overview.login isEqualToString:@"on"] ? NSOnState : NSOffState;
   // No "Open at Login" toggle for the menu-bar app itself: it's redundant with the OS Login Items
   // pane (same LSSharedFileList the app self-seeds on first launch), and "Open" reads as nonsense
   // for a windowless status-bar app. Users manage the app's own login item in System Preferences.
@@ -164,8 +177,10 @@ static BOOL isUp(NSString *s) {   // the VM is powered on, whatever Docker's rea
   icon.template = YES;
   [self.statusItem setImage:icon];
   [self.controller runVerb:verb completion:^(NSString *out, int code) {
-    [self notifyForVerb:verb code:code];
-    [self refresh];
+    // After the next overview, so a toast that quotes the disk quotes the new numbers.
+    __weak AppDelegate *weak = self;
+    [self.afterNext addObject:[^{ [weak notifyForVerb:verb code:code]; } copy]];
+    [self requestOverview];
   }];
 }
 
@@ -223,10 +238,10 @@ static BOOL isUp(NSString *s) {   // the VM is powered on, whatever Docker's rea
   }];
 }
 
-// "Disk: 5.2 GB free of 19.1 GB", from the cache the login agent's tick keeps (ctl disk-status).
+// "Disk: 5.2 GB free of 19.1 GB", from the latest overview.
 - (NSString *)diskLineForState:(NSString *)state {
   if (![state isEqualToString:@"running"]) return @"Disk: unknown (Docker stopped)";
-  NSArray *f = [[self.controller diskStatus] componentsSeparatedByString:@" "];
+  NSArray *f = [(self.overview.disk ?: @"unknown") componentsSeparatedByString:@" "];
   if (f.count != 4) return @"Disk: unknown";
   NSString *free = [NSByteCountFormatter stringFromByteCount:[f[2] longLongValue] * 1024
                                                   countStyle:NSByteCountFormatterCountStyleFile];
@@ -326,14 +341,13 @@ static BOOL isUp(NSString *s) {   // the VM is powered on, whatever Docker's rea
 }
 
 - (void)toggleVMLogin:(id)s {
-  BOOL on = self.vmLoginOn;
-  [self.controller runVerb:(on ? @"login-off" : @"login-on") completion:^(NSString *o, int c) { [self refresh]; }];
+  BOOL on = [self.overview.login isEqualToString:@"on"];
+  [self.controller runVerb:(on ? @"login-off" : @"login-on") completion:^(NSString *o, int c) { [self requestOverview]; }];
 }
 
 - (NSImage *)iconForState:(NSString *)state {
   BOOL running   = isUp(state);
-  BOOL working   = [state hasPrefix:@"working"] || [state isEqualToString:@"creating"] ||
-                   [state isEqualToString:@"finishing-setup"];
+  BOOL working   = isChanging(state);
   BOOL attention = [state isEqualToString:@"no-fusion"] ||
                    [state isEqualToString:@"absent"]    ||
                    [state isEqualToString:@"error"]     ||

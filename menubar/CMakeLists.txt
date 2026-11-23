@@ -23,7 +23,7 @@ set(MENUBAR_ICON "${CMAKE_SOURCE_DIR}/../updater/container-tools-updater.icns")
 set_source_files_properties("${MENUBAR_ICON}" PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
 
 add_executable(DockerMenu MACOSX_BUNDLE
-  main.m AppDelegate.m MDController.m MDWatchers.m MDLoginItem.m
+  main.m AppDelegate.m MDController.m MDWatchers.m MDLoginItem.m MDOverview.m
   "${MENUBAR_ICON}")
 target_compile_options(DockerMenu PRIVATE -fobjc-arc -Wall)
 set_target_properties(DockerMenu PROPERTIES

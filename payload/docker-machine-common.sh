@@ -408,18 +408,19 @@ _disk_line() { # secs
 # Everything the menu shows, in one call bounded to about 5 s, as "key value" lines after a version
 # line. The menu renders this and adds nothing of its own. "state" folds readiness into running
 # (finishing-setup / needs-attention). Docker and the VM's disk are asked only when the VM is up and
-# no op holds it; an omitted line means "keep what you had". --full adds the image line, which hashes
-# two ISOs: the menu asks for it on its slow cadence, not every 2 s.
+# no op holds it; an omitted line means "keep what you had". The VM's disk (an ssh round trip) and
+# the image (hashing two ISOs) change slowly, so a running VM's disk line and the image line come
+# only with --full, which the menu asks for on its slow cadence, not every 2 s.
 OVERVIEW_VERSION=1
 overview_status() { # [--full]
   rm -f "$STATE_DIR/state" "$STATE_DIR/readiness" "$STATE_DIR/disk" 2>/dev/null || true   # pre-overview caches
-  _ms=$(machine_status_bounded 3)
+  _ms=$(machine_status_bounded 5)   # usually ~1 s, but a cold first call on 10.9 can take 3+
   _w=$(_status_from "$_ms")
   _disk=
   case "$_w" in
     running)
       _a=$(api_state 3); [ "$_a" = ready ] || _w=$_a
-      _disk=$(_disk_line 2); case "$_disk" in ""|timeout) _disk=unknown ;; esac ;;
+      if [ "${1:-}" = --full ]; then _disk=$(_disk_line 2); case "$_disk" in ""|timeout) _disk=unknown ;; esac; fi ;;
     working:*|creating) ;;
     *) _disk=unknown ;;
   esac

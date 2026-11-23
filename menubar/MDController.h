@@ -1,25 +1,15 @@
 #import <Foundation/Foundation.h>
 
-// Bridges the app to the Plan A shell surface (docker-machine-ctl) + the state file.
+// Bridges the app to the shell surface (docker-machine-ctl). Nothing here reads a file: the app
+// asks overview-status and renders what it says.
 @interface MDController : NSObject
-
-// The absolute path the state file lives at (also what MDWatchers watches).
-@property (readonly) NSString *stateFilePath;
-
-// Current status word, read from the state file (falls back to running `ctl status`
-// if the file doesn't exist yet). One of: running/stopped/absent/creating/no-fusion/error.
-- (NSString *)currentState;
-
-// The VM's disk as the login agent's tick last cached it (`ctl disk-status`): "<total KB> <used KB>
-// <avail KB> ok|low", or "unknown". A file read only, so it never waits on the VM.
-- (NSString *)diskStatus;
-- (NSString *)readiness;   // the tick's latest: ready | finishing-setup | needs-attention | <status>
 
 // Run a ctl verb asynchronously; `completion` is called on the main thread with the
 // verb's stdout (trimmed) and exit code once it finishes.
 - (void)runVerb:(NSString *)verb completion:(void (^)(NSString *out, int code))completion;
 
-// Convenience: the vmware-vmx pid (0 if none), via `ctl vmx-pid`. Synchronous, fast.
-- (pid_t)vmxPid;
+// `docker-machine-ctl overview-status [--full]`, asynchronously; completion on the main thread with
+// its stdout. Bounded by ctl to about 5 s.
+- (void)fetchOverviewFull:(BOOL)full completion:(void (^)(NSString *output))completion;
 
 @end

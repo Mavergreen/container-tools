@@ -454,8 +454,9 @@ case_overview_status() {
   printf '%s\n' "$out" | grep -q '^state running$' || fail "running + API ok -> state running (got: $out)"
   printf '%s\n' "$out" | grep -q '^vmx-pid [0-9]*$' || fail "a vmx-pid line (got: $out)"
   printf '%s\n' "$out" | grep -q '^login on$' || fail "login on (got: $out)"
-  printf '%s\n' "$out" | grep -q '^disk ' || fail "a disk line when running (got: $out)"
+  printf '%s\n' "$out" | grep -q '^disk ' && fail "a running VM's disk is read only with --full (got: $out)"
   ov --full | grep -q '^image ' || fail "--full adds the image line"
+  ov --full | grep -q '^disk ' || fail "--full adds a running VM's disk line"
   echo tls > "$WORK/api";  [ "$(ov_field state)" = needs-attention ] || fail "unknown authority -> needs-attention"
   echo down > "$WORK/api"; [ "$(ov_field state)" = finishing-setup ] || fail "API not answering -> finishing-setup"
   echo Stopped > "$WORK/vmstate"
@@ -493,7 +494,7 @@ exit 0
 EOF
   chmod +x "$BIN/docker-machine"
   t0=$(date +%s); st=$(ov_field state)
-  [ $(( $(date +%s) - t0 )) -le 6 ] || fail "overview-status must finish within ~5 s when docker-machine hangs"
+  [ $(( $(date +%s) - t0 )) -le 7 ] || fail "overview-status must finish within ~6 s when docker-machine hangs"
   [ "$st" = error ] || fail "docker-machine not answering -> error (got: $st)"
   teardown
 }

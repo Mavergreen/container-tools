@@ -47,7 +47,7 @@ grep -q '"--user"' "$AD" || fail "'Check for Updates' must run the updater with 
 # Detection via the `image-status` verb; the action drives `image-upgrade`; both are docker-machine-ctl
 # verbs, so the identical roll runs headless from the CLI (`docker-machine-ctl image-upgrade`).
 grep -q 'Update VM Image' "$AD" || fail "menu must offer 'Update VM Image' when the VM image is stale"
-grep -q 'image-status'    "$AD" || fail "menu must detect a stale VM image via the image-status verb"
+grep -q 'overview.image' "$AD" || fail "menu must detect a stale VM image from the overview's image line"
 grep -q 'image-upgrade'   "$AD" || fail "'Update VM Image' must drive the image-upgrade verb"
 
 # A menu-bar extra (LSUIElement) has no app menu; binding Cmd-Q to Quit is not sensible.
@@ -77,12 +77,12 @@ grep -q 'MDFusionPromptSeeded' "$AD" || fail "must guard the one-time Fusion ale
 grep -q 'NSAlert' "$AD" || fail "must show an NSAlert when Fusion is absent"
 grep -q '@"Get VMware Fusion' "$AD" || fail "menu/alert must offer 'Get VMware Fusion'"
 
-# The VM's disk: a line in the menu read from the cache the login agent's tick keeps (the `disk` file
-# beside `state`, so opening the menu never waits on the VM), the attention badge when it is low, and
+# The VM's disk: a line in the menu from the overview's disk line (asked off the main thread, so
+# opening the menu never waits on the VM), the attention badge when it is low, and
 # a "Free Up Space…" action that confirms with `reclaimable` and then runs `free-space`. The disk
 # filled silently once (2026-09-24); these are what make that visible and fixable from the menu.
 MC="$ROOT/menubar/MDController.m"
-grep -q 'stringByAppendingPathComponent:@"disk"' "$MC" || fail "MDController must read the disk cache file beside the state file"
+grep -q 'overview.disk' "$AD" || fail "the disk line must come from the overview"
 grep -q '@"Disk: ' "$AD" || fail "the menu must show a 'Disk: …' line"
 grep -q '@"Disk almost full: ' "$AD" || fail "a low disk must read 'Disk almost full: …'"
 grep -q 'diskLow' "$AD" || fail "a low disk must raise the icon's attention badge"
@@ -92,3 +92,16 @@ grep -q 'runAndRefresh:@"free-space"' "$AD" || fail "Free Up Space must drive th
 grep -q 'not touched' "$AD" || fail "the Free Up Space confirmation must say containers and volumes are not touched"
 
 echo "docker_menubar_test: OK"
+
+# Live state (2026-11-23): the shell posts a Darwin notification on every change and the app asks
+# overview-status, off the main thread, one at a time. No cache files, no rules of the app's own.
+M="$ROOT/menubar"
+grep -q 'dev.mavergreen.container-tools.changed' "$M/MDWatchers.m" || fail "the app must listen for the shell's change notification"
+grep -q 'notify_register_dispatch' "$M/MDWatchers.m" || fail "listen with notify_register_dispatch"
+grep -q 'overview-status' "$M/MDController.m" || fail "the app must ask overview-status"
+grep -q 'stringWithContentsOfFile' "$M/MDController.m" && fail "the app must not read cache files"
+grep -q 'vmxPid\]' "$AD" && fail "no synchronous vmx-pid lookup on the refresh path"
+grep -q 'shownState' "$AD" && fail "the app adds no state rules of its own (overview-status folds readiness in)"
+grep -q 'Checking Docker' "$AD" || fail "before the first overview the menu says Checking Docker…"
+grep -q 'MDOverview.m' "$M/CMakeLists.txt" || fail "MDOverview.m must be built"
+echo "docker_menubar_test: live-state OK"

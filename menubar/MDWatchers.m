@@ -1,67 +1,55 @@
 #import "MDWatchers.h"
 #import <AppKit/AppKit.h>
-#import <sys/event.h>
-#import <fcntl.h>
+#import <notify.h>
 
 @interface MDWatchers () {
-  NSString *_statePath;
   void (^_onChange)(void);
-  dispatch_source_t _fileSrc;   // state file NOTE_WRITE
   dispatch_source_t _procSrc;   // vmx NOTE_EXIT
-  dispatch_source_t _timerSrc;  // slow fallback
+  dispatch_source_t _timerSrc;  // next scheduled check
   id _wakeObserver;             // NSWorkspace wake token
-  int _fileFd;
+  int _notifyToken;
+  BOOL _notifyRegistered;
 }
 @end
 
+static const char kChanged[] = "dev.mavergreen.container-tools.changed";
+
 @implementation MDWatchers
 
-- (instancetype)initWithStatePath:(NSString *)statePath onChange:(void (^)(void))onChange {
-  if ((self = [super init])) { _statePath = [statePath copy]; _onChange = [onChange copy]; _fileFd = -1; }
+- (instancetype)initWithOnChange:(void (^)(void))onChange {
+  if ((self = [super init])) { _onChange = [onChange copy]; }
   return self;
 }
 
+- (void)fire { if (_onChange) _onChange(); }
+
 - (void)start {
-  [self armFileWatch];
   __weak MDWatchers *weak = self;
-  // Slow fallback (covers externally-initiated starts when the agent is disabled).
+  // The shell's announce (notifyutil -p) after every change it makes.
+  if (notify_register_dispatch(kChanged, &_notifyToken, dispatch_get_main_queue(), ^(int t) {
+        [weak fire];
+      }) == NOTIFY_STATUS_OK)
+    _notifyRegistered = YES;
   _timerSrc = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
-  dispatch_source_set_timer(_timerSrc, dispatch_time(DISPATCH_TIME_NOW, 60*NSEC_PER_SEC), 60*NSEC_PER_SEC, 5*NSEC_PER_SEC);
-  dispatch_source_set_event_handler(_timerSrc, ^{ MDWatchers *me = weak; if (me && me->_onChange) me->_onChange(); });
+  dispatch_source_set_timer(_timerSrc, DISPATCH_TIME_FOREVER, DISPATCH_TIME_FOREVER, 0);
+  dispatch_source_set_event_handler(_timerSrc, ^{ [weak fire]; });
   dispatch_resume(_timerSrc);
-  // Refresh on wake.
   _wakeObserver = [[[NSWorkspace sharedWorkspace] notificationCenter]
       addObserverForName:NSWorkspaceDidWakeNotification
-      object:nil queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification *n) {
-        MDWatchers *me = weak; if (me && me->_onChange) me->_onChange();
-      }];
+      object:nil queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification *n) { [weak fire]; }];
+}
+
+- (void)scheduleNextIn:(NSTimeInterval)secs {
+  if (!_timerSrc) return;
+  dispatch_source_set_timer(_timerSrc, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(secs * NSEC_PER_SEC)),
+                            DISPATCH_TIME_FOREVER, (uint64_t)(0.1 * secs * NSEC_PER_SEC));
 }
 
 - (void)dealloc {
-  if (_fileSrc) dispatch_source_cancel(_fileSrc);
+  if (_notifyRegistered) notify_cancel(_notifyToken);
   if (_procSrc) dispatch_source_cancel(_procSrc);
   if (_timerSrc) dispatch_source_cancel(_timerSrc);
-  if (_fileFd >= 0) close(_fileFd);
   if (_wakeObserver) [[[NSWorkspace sharedWorkspace] notificationCenter] removeObserver:_wakeObserver];
-}
-
-- (void)armFileWatch {
-  if (_fileSrc) { dispatch_source_cancel(_fileSrc); _fileSrc = nil; }
-  if (_fileFd >= 0) { close(_fileFd); _fileFd = -1; }
-  // Ensure the file exists so we can open it; the watch re-arms on delete.
-  [[NSFileManager defaultManager] createFileAtPath:_statePath contents:nil attributes:nil];
-  _fileFd = open(_statePath.fileSystemRepresentation, O_EVTONLY);
-  if (_fileFd < 0) return;
-  _fileSrc = dispatch_source_create(DISPATCH_SOURCE_TYPE_VNODE, _fileFd,
-      DISPATCH_VNODE_WRITE | DISPATCH_VNODE_DELETE | DISPATCH_VNODE_RENAME, dispatch_get_main_queue());
-  __weak MDWatchers *weak = self;
-  dispatch_source_set_event_handler(_fileSrc, ^{
-    MDWatchers *me = weak; if (!me) return;
-    unsigned long f = dispatch_source_get_data(me->_fileSrc);
-    if (me->_onChange) me->_onChange();
-    if (f & (DISPATCH_VNODE_DELETE | DISPATCH_VNODE_RENAME)) [me armFileWatch]; // re-open
-  });
-  dispatch_resume(_fileSrc);
 }
 
 - (void)watchVmxPid:(pid_t)pid {
@@ -72,7 +60,7 @@
   __weak MDWatchers *weak = self;
   dispatch_source_set_event_handler(_procSrc, ^{
     MDWatchers *me = weak; if (!me) return;
-    // Stop watching this pid BEFORE notifying. _onChange re-enters refresh -> watchVmxPid:, which
+    // Stop watching this pid BEFORE notifying. _onChange leads to applyOverview: -> watchVmxPid:, which
     // cancels+nils _procSrc; doing that first and then touching me->_procSrc here would call
     // dispatch_source_cancel(NULL) -> crash. Snapshot the source, clear the ivar, cancel the
     // snapshot, then notify (the re-entrant watchVmxPid: now sees a nil _procSrc and no-ops).

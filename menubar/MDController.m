@@ -4,43 +4,10 @@ static NSString * const kCtl = @"/usr/local/mavergreen/container-tools/bin/docke
 
 @implementation MDController
 
-- (NSString *)stateFilePath {
-  NSString *base = [NSHomeDirectory()
-    stringByAppendingPathComponent:@"Library/Application Support/Mavergreen/container-tools"];
-  return [base stringByAppendingPathComponent:@"state"];
-}
-
-- (NSString *)currentState {
-  NSString *s = [NSString stringWithContentsOfFile:self.stateFilePath
-                                          encoding:NSUTF8StringEncoding error:NULL];
-  s = [s stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-  if (s.length) return s;
-  // Seed synchronously the first time (no state file yet).
-  return [self runVerbSync:@"status" out:NULL];
-}
-
-- (NSString *)diskStatus {
-  NSString *path = [[self.stateFilePath stringByDeletingLastPathComponent]
-                    stringByAppendingPathComponent:@"disk"];
-  NSString *s = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:NULL];
-  s = [s stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-  return s.length ? s : @"unknown";
-}
-
-// Readiness the login agent's tick recorded (docker-machine-ctl readiness): "running" is power, and
-// Docker can be running-but-unusable while setup finishes or its TLS needs Repair.
-- (NSString *)readiness {
-  NSString *path = [[self.stateFilePath stringByDeletingLastPathComponent]
-                    stringByAppendingPathComponent:@"readiness"];
-  NSString *s = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:NULL];
-  s = [s stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-  return s.length ? s : @"unknown";
-}
-
-- (NSString *)runVerbSync:(NSString *)verb out:(int *)codeOut {
+- (NSString *)runArgsSync:(NSArray *)args out:(int *)codeOut {
   NSTask *t = [[NSTask alloc] init];
   t.launchPath = kCtl;
-  t.arguments = @[verb];
+  t.arguments = args;
   NSPipe *pipe = [NSPipe pipe];
   t.standardOutput = pipe;
   t.standardError = [NSPipe pipe];
@@ -60,14 +27,17 @@ static NSString * const kCtl = @"/usr/local/mavergreen/container-tools/bin/docke
 - (void)runVerb:(NSString *)verb completion:(void (^)(NSString *, int))completion {
   dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
     int code = 0;
-    NSString *out = [self runVerbSync:verb out:&code];
+    NSString *out = [self runArgsSync:@[verb] out:&code];
     dispatch_async(dispatch_get_main_queue(), ^{ if (completion) completion(out, code); });
   });
 }
 
-- (pid_t)vmxPid {
-  NSString *s = [self runVerbSync:@"vmx-pid" out:NULL];
-  return (pid_t)[s integerValue];   // 0 when empty
+- (void)fetchOverviewFull:(BOOL)full completion:(void (^)(NSString *))completion {
+  NSArray *args = full ? @[@"overview-status", @"--full"] : @[@"overview-status"];
+  dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+    NSString *out = [self runArgsSync:args out:NULL];
+    dispatch_async(dispatch_get_main_queue(), ^{ if (completion) completion(out); });
+  });
 }
 
 @end
