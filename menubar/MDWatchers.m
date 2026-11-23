@@ -60,7 +60,7 @@ static const char kChanged[] = "dev.mavergreen.container-tools.changed";
   __weak MDWatchers *weak = self;
   dispatch_source_set_event_handler(_procSrc, ^{
     MDWatchers *me = weak; if (!me) return;
-    // Stop watching this pid BEFORE notifying. _onChange leads to applyOverview: -> watchVmxPid:, which
+    // Stop watching this pid BEFORE notifying. _onChange leads to render -> watchVmxPid:, which
     // cancels+nils _procSrc; doing that first and then touching me->_procSrc here would call
     // dispatch_source_cancel(NULL) -> crash. Snapshot the source, clear the ivar, cancel the
     // snapshot, then notify (the re-entrant watchVmxPid: now sees a nil _procSrc and no-ops).

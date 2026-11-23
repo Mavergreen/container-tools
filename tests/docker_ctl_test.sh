@@ -572,6 +572,19 @@ case_smoke_reads_no_state_file() {
   grep -q 'cat "$STATE"' "$ROOT/tests/smoke-mavericks.sh" && fail "smoke-mavericks.sh must not read the removed state file"
   return 0
 }
+case_timeout_leaves_no_orphans() {
+  setup
+  cat > "$BIN/slowparent" <<EOF
+#!/bin/sh
+sleep 41 &
+wait
+EOF
+  chmod +x "$BIN/slowparent"
+  ( . "$MAVERICKS_DOCKER_COMMON"; _with_timeout 1 slowparent ) >/dev/null 2>&1 && fail "a timed-out command exits 124"
+  sleep 1
+  pgrep -f 'sleep 41' >/dev/null && { pkill -f 'sleep 41'; fail "a timed-out command's children must be killed too"; }
+  teardown
+}
 case_stop_marks_user_stopped() {
   setup; stub_dm Stopped
   MAVERICKS_DOCKER_BOOT_ID=boot-A sh "$CTL" stop >/dev/null || fail "stop exit 0"
@@ -785,6 +798,7 @@ case_no_room_to_boot() {
   grep -q '^stop \|^upgrade ' "$DM_LOG" && fail "image-upgrade must not stop or upgrade without room"
   grep -q 'GB free' "$MAVERICKS_DOCKER_LOG" || fail "the refusal must say in the log how much space is needed"
   [ -d "$MAVERICKS_DOCKER_STATE_DIR/op.lock" ] && fail "a refused verb must release op.lock"
+  [ -f "$MAVERICKS_DOCKER_STATE_DIR/boot-refused" ] || fail "a refused Start is remembered, so the menu says why, not just Stopped"
   teardown
 }
 
@@ -909,4 +923,5 @@ case_overview_local_checks_first
 case_overview_slow_docker_is_running
 case_ensure_ready_retries_refused_boot
 case_smoke_reads_no_state_file
+case_timeout_leaves_no_orphans
 echo "docker_ctl_test: OK"

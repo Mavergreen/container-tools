@@ -110,7 +110,7 @@ user_stopped() { # true when the user stopped the VM during this boot; drops a m
   return 1
 }
 
-op_begin() { # name  — announce a long op: create the lock and mark the state working:<name>
+op_begin() { # name  — announce a long op: create the lock, so the state reads working:<name>
   _op=${1:-working}   # tolerate a zero-arg call under the callers' `set -u`
   mkdir -p "$STATE_DIR" 2>/dev/null || true
   mkdir "$OP_LOCK" 2>/dev/null || true  # portability-ok: runs only on the Mac (BSD mkdir is atomic)
@@ -179,7 +179,7 @@ host_room_to_boot() {
   return 1
 }
 
-# The single word the state file / menu bar cares about.
+# The single word for the VM's state (the menu gets it through overview-status).
 status_word() { _local_status || _status_from "$(machine_status)"; }
 # What the Mac alone can tell, without asking docker-machine (which waits while VMware has the VM
 # paused): prints the word and succeeds, or prints nothing and fails.
@@ -366,10 +366,19 @@ READINESS_VERSION=1
 API_ERR_FILE="$STATE_DIR/api-error" # the latest API probe's stderr, for diagnostics
 _with_timeout() { # secs cmd...  -- run cmd; kill it after secs (exit 124). No GNU timeout on 10.9.
   _s=$1; shift
+  # The killer marks a timeout in a flag file before it kills, so a slow kill can't be mistaken for
+  # the command finishing. It kills the command's children too (docker-machine's vmrun or ssh), or
+  # each timeout would leave one orphaned; and its own sleep is killed when the command finishes first.
+  _tf=$(mktemp "${TMPDIR:-/tmp}/ct-timeout.XXXXXX" 2>/dev/null) && rm -f "$_tf" || _tf=
   "$@" & _p=$!
-  ( sleep "$_s"; kill "$_p" 2>/dev/null ) >/dev/null 2>&1 </dev/null & _k=$!
+  ( trap 'kill "$_sl" 2>/dev/null; exit 0' TERM
+    sleep "$_s" & _sl=$!; wait "$_sl"
+    [ -z "$_tf" ] || : > "$_tf"; pkill -P "$_p"; kill "$_p" ) >/dev/null 2>&1 </dev/null & _k=$!
   wait "$_p"; _r=$?
-  if kill -0 "$_k" 2>/dev/null; then kill "$_k" 2>/dev/null; else _r=124; fi
+  kill "$_k" 2>/dev/null; wait "$_k" 2>/dev/null
+  if [ -n "$_tf" ]; then
+    [ -e "$_tf" ] && { rm -f "$_tf"; _r=124; }
+  elif [ "$_r" -eq 143 ]; then _r=124; fi
   return $_r
 }
 api_state() { # secs  -- for a running VM: ready | finishing-setup | needs-attention
@@ -416,7 +425,8 @@ _disk_line() { # secs
 # (finishing-setup / needs-attention). Docker and the VM's disk are asked only when the VM is up and
 # no op holds it; an omitted line means "keep what you had". The VM's disk (an ssh round trip) and
 # the image (hashing two ISOs) change slowly, so a running VM's disk line and the image line come
-# only with --full, which the menu asks for on its slow cadence, not every 2 s.
+# only with --full, which the menu asks for on its slow cadence, not every 2 s. A quick call takes
+# 1-2 s on an idle 10.9 box; --full takes 5-10 s, more under load.
 OVERVIEW_VERSION=1
 overview_status() { # [--full]
   rm -f "$STATE_DIR/state" "$STATE_DIR/readiness" "$STATE_DIR/disk" 2>/dev/null || true   # pre-overview caches
@@ -501,7 +511,7 @@ repair() {
   return $_r
 }
 diagnostics() {
-  echo "readiness: $(readiness_state 10)"
+  echo "readiness: $(readiness_state 5)"
   echo "power: $(machine_status || true)"
   echo "status: $(status_word)"
   echo "context $CONTEXT: $(docker context inspect "$CONTEXT" --format '{{.Endpoints.docker.Host}}' 2>/dev/null)"

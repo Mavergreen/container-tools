@@ -523,7 +523,7 @@ case_writes_state() {
   setup; make_dm; make_docker
   MAVERICKS_DOCKER_TEST_STATUS=Running sh "$BOOT" || fail "should exit 0"
   [ "$(MAVERICKS_DOCKER_TEST_STATUS=Running sw)" = running ] \
-    || fail "bootstrap must write 'running' to the state file"
+    || fail "bootstrap must announce 'running'"
   teardown
 }
 

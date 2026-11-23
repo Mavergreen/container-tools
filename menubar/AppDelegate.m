@@ -54,10 +54,12 @@ static BOOL isChanging(NSString *s) {
   [self.controller fetchOverviewFull:full completion:^(NSString *out) {
     MDOverview *o = [MDOverview overviewFromOutput:out previous:self.overview];
     if (o) { self.overview = o; if (full) self.lastFull = [NSDate date]; }
+    // An answer that doesn't parse (an older or missing ctl) won't fix itself in 2 s: ask slowly.
+    BOOL parseFailed = (o == nil);
     self.fetching = NO;
     [self render];
     if (self.fetchAgain) { self.fetchAgain = NO; [self requestOverview]; return; }
-    [self.watchers scheduleNextIn:(isChanging(self.overview.state) ? kFastSecs : kSlowSecs)];
+    [self.watchers scheduleNextIn:(!parseFailed && isChanging(self.overview.state) ? kFastSecs : kSlowSecs)];
   }];
 }
 - (void)menuWillOpen:(NSMenu *)menu { [self requestOverview]; }
@@ -100,12 +102,15 @@ static BOOL isChanging(NSString *s) {
   if ([s isEqualToString:@"creating"])  return @"Docker: Starting…";
   if ([s isEqualToString:@"absent"])    return @"Docker: Not set up";
   if ([s isEqualToString:@"no-fusion"]) return @"VMware Fusion needed";
-  if ([s isEqualToString:@"host-disk-full"]) return @"Docker: Paused (Mac disk full)";
+  if ([s isEqualToString:@"host-disk-full"])
+    return self.overview.vmxPid > 0 ? @"Docker: Paused (Mac disk full)" : @"Docker: Stopped (Mac disk full)";
   return @"Docker: (error)";
 }
 
 - (void)rebuildMenuForState:(NSString *)state {
-  NSMenu *m = [[NSMenu alloc] init];
+  // Into the same NSMenu, so a menu that is open while an overview arrives updates in place.
+  NSMenu *m = self.statusItem.menu ?: [[NSMenu alloc] init];
+  [m removeAllItems];
   m.delegate = self;
 
   NSMenuItem *header = [m addItemWithTitle:[self humanState:state] action:NULL keyEquivalent:@""];
@@ -118,10 +123,15 @@ static BOOL isChanging(NSString *s) {
 
   if ([state isEqualToString:@"no-fusion"]) {
     [m addItemWithTitle:@"Get VMware Fusion…" action:@selector(doGetFusion:) keyEquivalent:@""];
-  } else if ([state isEqualToString:@"host-disk-full"]) {
+  } else if ([state isEqualToString:@"host-disk-full"] && self.overview.vmxPid > 0) {
     // VMware paused the VM and carries on by itself once there is room; nothing here would help.
     NSMenuItem *hint = [m addItemWithTitle:@"Free space on this Mac to resume" action:NULL keyEquivalent:@""];
     hint.enabled = NO;
+  } else if ([state isEqualToString:@"host-disk-full"]) {
+    // The VM is stopped: starting it was refused for want of room. Free some, then start it.
+    NSMenuItem *hint = [m addItemWithTitle:@"Free space on this Mac, then start Docker" action:NULL keyEquivalent:@""];
+    hint.enabled = NO;
+    [m addItemWithTitle:@"Start Docker" action:@selector(doStart:) keyEquivalent:@""];
   } else if ([state isEqualToString:@"absent"] || [state isEqualToString:@"error"]) {
     [m addItemWithTitle:@"Set Up / Repair…" action:@selector(doSetup:) keyEquivalent:@""];
   } else if (state && ![state isEqualToString:@"creating"] && ![state hasPrefix:@"working"]) {
@@ -158,7 +168,7 @@ static BOOL isChanging(NSString *s) {
   [m addItemWithTitle:@"Quit Container Tools for Mavericks" action:@selector(terminate:) keyEquivalent:@""];
 
   for (NSMenuItem *it in m.itemArray) if (it.action && it.action != @selector(terminate:)) it.target = self;
-  [self.statusItem setMenu:m];
+  if (self.statusItem.menu != m) [self.statusItem setMenu:m];
 }
 
 - (void)notifyTitle:(NSString *)title text:(NSString *)text {

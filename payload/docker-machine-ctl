@@ -18,6 +18,7 @@ _run_and_announce() { # docker-machine subcommand
 _refuse_without_room() { # verb  -- end the op and fail if the Mac can't fit the VM's power-on
   host_room_to_boot && return 0
   log "$1 refused: $ROOM_MSG"
+  printf '%s\n' "$ROOM_MSG" > "$BOOT_REFUSED" 2>/dev/null || true   # so the menu says why, not just Stopped
   op_end
   exit 1
 }
