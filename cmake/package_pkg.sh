@@ -12,13 +12,13 @@
 #
 # Usage:
 #   package_pkg.sh --out PKG --standalone-out container-tools-V-macos-x86_64.tar.gz --version V --docker BIN --compose BIN --machine BIN --iso ISO \
-#     --updater-app APP.app --bootstrap BIN --common FILE --vm-provider FILE --ctl BIN --migrate BIN --menubar-app APP.app --hotplug BIN \
+#     --updater-app APP.app --bootstrap BIN --common FILE --vm-provider FILE --autosize FILE --ctl BIN --migrate BIN --menubar-app APP.app --hotplug BIN \
 #     --launch-agent PLIST [--msc-scripts DIR] [--resources DIR --welcome FILE]
 set -eu
 export COPYFILE_DISABLE=1
 
 OUT=""; ARCHIVE=""; VER=""; DOCKER=""; COMPOSE=""; MACHINE=""; LAZY=""; ISO=""; UPD_APP=""; DOCKED=""; SYNC=""
-BOOT=""; COMMON=""; PROVIDER=""; CTL=""; MIGRATE=""; GETFUSION=""; MENUBAR=""; HOTPLUG=""; LAUNCHAGENT=""
+BOOT=""; COMMON=""; PROVIDER=""; AUTOSIZE=""; CTL=""; MIGRATE=""; GETFUSION=""; MENUBAR=""; HOTPLUG=""; LAUNCHAGENT=""
 SHIPYARD=""; RES=""; WELCOME=""; README_SA=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -37,6 +37,7 @@ while [ $# -gt 0 ]; do
     --bootstrap) BOOT="$2"; shift 2;;
     --common) COMMON="$2"; shift 2;;
     --vm-provider) PROVIDER="$2"; shift 2;;
+    --autosize) AUTOSIZE="$2"; shift 2;;
     --ctl) CTL="$2"; shift 2;;
     --migrate) MIGRATE="$2"; shift 2;;
     --get-fusion) GETFUSION="$2"; shift 2;;
@@ -51,14 +52,14 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$OUT" ] && [ -n "$ARCHIVE" ] && [ -n "$README_SA" ] && [ -n "$VER" ] && [ -n "$DOCKER" ] && [ -n "$COMPOSE" ] && [ -n "$MACHINE" ] \
   && [ -n "$LAZY" ] && [ -n "$ISO" ] && [ -n "$UPD_APP" ] && [ -n "$DOCKED" ] && [ -n "$SYNC" ] \
-  && [ -n "$BOOT" ] && [ -n "$COMMON" ] && [ -n "$PROVIDER" ] && [ -n "$CTL" ] && [ -n "$MIGRATE" ] && [ -n "$GETFUSION" ] && [ -n "$MENUBAR" ] && [ -n "$HOTPLUG" ] && [ -n "$LAUNCHAGENT" ] \
-  || { echo "package_pkg: need --out --standalone-out --readme --version --docker --compose --machine --lazydocker --iso --updater-app --docked --sync-helper --bootstrap --common --vm-provider --ctl --migrate --get-fusion --menubar-app --hotplug --launch-agent" >&2; exit 2; }
+  && [ -n "$BOOT" ] && [ -n "$COMMON" ] && [ -n "$PROVIDER" ] && [ -n "$AUTOSIZE" ] && [ -n "$CTL" ] && [ -n "$MIGRATE" ] && [ -n "$GETFUSION" ] && [ -n "$MENUBAR" ] && [ -n "$HOTPLUG" ] && [ -n "$LAUNCHAGENT" ] \
+  || { echo "package_pkg: need --out --standalone-out --readme --version --docker --compose --machine --lazydocker --iso --updater-app --docked --sync-helper --bootstrap --common --vm-provider --autosize --ctl --migrate --get-fusion --menubar-app --hotplug --launch-agent" >&2; exit 2; }
 if [ -z "$SHIPYARD" ]; then
   # --msc-scripts wins when given; otherwise msc.sh takes $SHIPYARD_SCRIPTS (install@v1 exports it in
   # CI) or asks shipyard-cmake where find_package(MavericksShipyard) lands, and exits if neither works.
   . "$(dirname "$0")/../msc.sh"
 fi
-for f in "$DOCKER" "$COMPOSE" "$MACHINE" "$LAZY" "$ISO" "$DOCKED" "$SYNC" "$BOOT" "$COMMON" "$PROVIDER" "$HOTPLUG" "$CTL" "$MIGRATE" "$GETFUSION" "$LAUNCHAGENT" "$README_SA"; do [ -f "$f" ] || { echo "package_pkg: missing input: $f" >&2; exit 1; }; done
+for f in "$DOCKER" "$COMPOSE" "$MACHINE" "$LAZY" "$ISO" "$DOCKED" "$SYNC" "$BOOT" "$COMMON" "$PROVIDER" "$AUTOSIZE" "$HOTPLUG" "$CTL" "$MIGRATE" "$GETFUSION" "$LAUNCHAGENT" "$README_SA"; do [ -f "$f" ] || { echo "package_pkg: missing input: $f" >&2; exit 1; }; done
 [ -d "$UPD_APP" ] || { echo "package_pkg: no updater .app: $UPD_APP" >&2; exit 1; }
 [ -d "$MENUBAR" ] || { echo "package_pkg: no menubar .app: $MENUBAR" >&2; exit 1; }
 for h in stage_standalone.sh stage_pkg_from_archive.sh stage_product.sh set_install_floor.sh build_component_pkg.sh assert_pkg_installs_in_place.sh \
@@ -89,6 +90,7 @@ install -m 0755 "$MIGRATE" "$T/bin/docker-machine-migrate"
 install -m 0755 "$GETFUSION" "$T/bin/container-tools-get-fusion"
 install -m 0644 "$COMMON"  "$T/libexec/docker-machine-common.sh"
 install -m 0644 "$PROVIDER" "$T/libexec/vm-provider-fusion.sh"
+install -m 0644 "$AUTOSIZE" "$T/libexec/autosize.sh"
 install -m 0755 "$HOTPLUG" "$T/libexec/container-tools-hotplug"   # ctl resize's live hot-add
 install -m 0755 "$COMPOSE" "$T/lib/docker/cli-plugins/docker-compose"
 ln -s ../lib/docker/cli-plugins/docker-compose "$T/bin/docker-compose"

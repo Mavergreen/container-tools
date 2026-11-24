@@ -36,6 +36,12 @@ for _vp in "${MAVERICKS_DOCKER_VM_PROVIDER:-}" "${CT_HOME:+$CT_HOME/libexec/vm-p
   [ -n "$_vp" ] && [ -f "$_vp" ] && { . "$_vp"; break; }
 done
 command -v vm_pid >/dev/null 2>&1 || { echo "docker-machine-common.sh: no VM provider (vm-provider-fusion.sh) found" >&2; return 1 2>/dev/null || exit 1; }
+# Self-sizing (autosize.sh), found the same way.
+for _as in "${MAVERICKS_DOCKER_AUTOSIZE:-}" "${CT_HOME:+$CT_HOME/libexec/autosize.sh}" \
+           "${MAVERICKS_DOCKER_COMMON:+${MAVERICKS_DOCKER_COMMON%/*}/autosize.sh}"; do
+  [ -n "$_as" ] && [ -f "$_as" ] && { . "$_as"; break; }
+done
+command -v autosize_decide >/dev/null 2>&1 || { echo "docker-machine-common.sh: autosize.sh not found" >&2; return 1 2>/dev/null || exit 1; }
 MACHDIR=${MAVERICKS_DOCKER_MACHDIR:-$HOME/.docker/machine/machines}
 
 legacy_default_exists() { [ -d "$MACHDIR/default" ]; }

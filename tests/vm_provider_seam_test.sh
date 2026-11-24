@@ -16,7 +16,7 @@ _defined=$(sed -n 's/^\(vm_[a-z_]*\)() *{.*/\1/p' "$P" | sort)
 
 # The provider-neutral scripts reach Fusion only through it. Comments may name Fusion (they say why);
 # code may not. Allowed: the menu's wire words (vmx-pid, no-fusion) and notify's 'fusion' key.
-for f in docker-machine-common.sh docker-machine-bootstrap docker-machine-ctl; do
+for f in docker-machine-common.sh docker-machine-bootstrap docker-machine-ctl autosize.sh; do
   _hits=$(grep -n -E '\.vmx|\.vmem|\.vmdk|vmware|vmrun|vdiskmanager|libvix|hotplug|VMware|Fusion|vmwarefusion|[^.]memsize|numvcpus|checkpoint\.|_fusion' "$ROOT/payload/$f" \
     | grep -v -E '^[0-9]+: *#' | grep -v -E 'vmx-pid|no-fusion|notify fusion' | grep -v -E '^[0-9]+:.*[^\\]# ' || true)
   [ -z "$_hits" ] || fail "$f reaches Fusion directly:
