@@ -1,0 +1,12 @@
+SPIKE, not for main: let a running VM accept memory and CPUs VMware hot-adds
+(VixVM_HotPlugMemory/HotPlugCPU), and bring added memory online by itself.
+
+diff --git a/files/kernel-config.d/mavergreen-hotplug b/files/kernel-config.d/mavergreen-hotplug
+new file mode 100644
+--- /dev/null
++++ b/files/kernel-config.d/mavergreen-hotplug
+@@ -0,0 +1,4 @@
++CONFIG_MEMORY_HOTPLUG=y
++CONFIG_MEMORY_HOTPLUG_DEFAULT_ONLINE=y
++CONFIG_ACPI_HOTPLUG_MEMORY=y
++CONFIG_ACPI_HOTPLUG_CPU=y
