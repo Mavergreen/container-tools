@@ -30,11 +30,12 @@ _refuse_without_room() { # verb  -- end the op and fail if the Mac can't fit the
 
 case "${1:-}" in
   status)  status_word ;;
-  start)   clear_user_stopped; clear_boot_refused; op_begin start; _refuse_without_room start; _run_and_announce start; _rc=$?; op_end; exit $_rc ;;
+  # Starting or restarting Docker applies a size change self-sizing is holding for a restart.
+  start)   clear_user_stopped; clear_boot_refused; autosize_apply_pending && exit 0; op_begin start; _refuse_without_room start; _run_and_announce start; _rc=$?; op_end; exit $_rc ;;
   stop)    op_begin stop; _run_and_announce stop; _rc=$?
            [ "$_rc" -eq 0 ] && mark_user_stopped
            op_end; exit $_rc ;;
-  restart) clear_user_stopped; clear_boot_refused; op_begin restart; _run_and_announce restart; _rc=$?; op_end; exit $_rc ;;
+  restart) clear_user_stopped; clear_boot_refused; autosize_apply_pending && exit 0; op_begin restart; _run_and_announce restart; _rc=$?; op_end; exit $_rc ;;
   image-status) image_status ;;
   resource-status) resource_status ;;
   # Roll the VM onto the freshly-installed boot2docker.iso. Repoint first (a migrated host's stale

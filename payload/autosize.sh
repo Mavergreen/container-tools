@@ -27,7 +27,7 @@ autosize_decide() {
   done
   _l5=$(_as_x100 "$S_LOAD5"); _as_int "$_l5" || { echo none; return 0; }
   a_t=; a_oom=0; a_pswpin=0; a_memhot=0; a_cpuhot=0; a_lowmem_s=0; a_lowcpu_s=0; a_peak_used_kb=0
-  a_peak_load5=0; a_cool_until=0; a_size_mb=; a_size_cpus=
+  a_peak_load5=0; a_cool_until=0; a_size_mb=; a_size_cpus=; a_grown_mb=0; a_grown_cpus=0
   if [ -f "$_f" ]; then
     while read -r _k _val; do
       _as_int "$_val" || continue
@@ -36,6 +36,7 @@ autosize_decide() {
         cpuhot) a_cpuhot=$_val ;; lowmem_s) a_lowmem_s=$_val ;; lowcpu_s) a_lowcpu_s=$_val ;;
         peak_used_kb) a_peak_used_kb=$_val ;; peak_load5) a_peak_load5=$_val ;;
         cool_until) a_cool_until=$_val ;; size_mb) a_size_mb=$_val ;; size_cpus) a_size_cpus=$_val ;;
+        grown_mb) a_grown_mb=$_val ;; grown_cpus) a_grown_cpus=$_val ;;
       esac
     done < "$_f"
   fi
@@ -48,8 +49,12 @@ autosize_decide() {
       a_cool_until=$(( NOW + AUTOSIZE_COOLDOWN )); a_memhot=0; a_cpuhot=0
       a_lowmem_s=0; a_lowcpu_s=0; a_peak_used_kb=0; a_peak_load5=0
     fi
-    # Pressure: PSI when the kernel reports it, else swap-in and load.
+    # Pressure: PSI when the kernel reports it, else swap-in and load. Memory stalls and swapping
+    # count only while the VM as a whole is short (under 15% available): a container held to its own
+    # memory limit stalls and swaps too, and growing the VM doesn't help it (review, 2026-11-24).
+    _short=$(( S_MEMAVAIL_KB * 100 < S_MEMTOTAL_KB * 15 ))
     if [ -n "$S_PSI_MEM" ]; then _mh=$(( $(_as_x100 "$S_PSI_MEM") >= 1000 )); else _mh=$(( _swd >= 1000 )); fi
+    _mh=$(( _mh && _short ))
     if [ -n "$S_PSI_CPU" ]; then _ch=$(( $(_as_x100 "$S_PSI_CPU") >= 5000 )); else _ch=$(( _l5 >= 150 * CUR_CPUS )); fi
     if [ "$_mh" = 1 ]; then a_memhot=$(( a_memhot + 1 )); else a_memhot=0; fi
     if [ "$_ch" = 1 ]; then a_cpuhot=$(( a_cpuhot + 1 )); else a_cpuhot=0; fi
@@ -78,7 +83,7 @@ autosize_decide() {
         if [ "$_wm" = 1 ]; then _out="ceiling memory"; else _out="ceiling cpus"; fi
       else
         _mode=live; _as_int "$LIVE_CAP_MB" && [ "$_nm" -gt "$LIVE_CAP_MB" ] && [ "$_nm" -gt "$CUR_MB" ] && _mode=restart
-        _out="grow $_nm $_nc $_mode"
+        _out="grow $_nm $_nc $_mode"; a_grown_mb=$_nm; a_grown_cpus=$_nc
       fi
       a_memhot=0; a_cpuhot=0
     else
@@ -88,15 +93,22 @@ autosize_decide() {
         _keep=$(_as_mult4_up $(( (a_peak_used_kb * 3 / 2 + 1023) / 1024 )))
         [ "$_nm" -ge "$_keep" ] || _nm=$_keep
         [ "$_nm" -ge "$AUTOSIZE_MIN_MB" ] || _nm=$AUTOSIZE_MIN_MB
+        # Not below the size the last grow reached until 4 windows (12 days) pass quietly: the spike
+        # that grew it happens between samples, and undoing it just to OOM again cycles.
+        if [ "$a_lowmem_s" -lt $(( AUTOSIZE_WINDOW * 4 )) ] && [ "$_nm" -lt "$a_grown_mb" ]; then _nm=$a_grown_mb; fi
         [ "$_nm" -lt "$CUR_MB" ] || _nm=$CUR_MB
       fi
-      if [ "$a_lowcpu_s" -ge "$AUTOSIZE_WINDOW" ] && [ "$CUR_CPUS" -gt 1 ]; then _nc=$(( CUR_CPUS - 1 )); fi
+      if [ "$a_lowcpu_s" -ge "$AUTOSIZE_WINDOW" ] && [ "$CUR_CPUS" -gt 1 ]; then
+        _nc=$(( CUR_CPUS - 1 ))
+        if [ "$a_lowcpu_s" -lt $(( AUTOSIZE_WINDOW * 4 )) ] && [ "$_nc" -lt "$a_grown_cpus" ]; then _nc=$CUR_CPUS; fi
+      fi
       if [ "$_nm" != "$CUR_MB" ] || [ "$_nc" != "$CUR_CPUS" ]; then _out="shrink $_nm $_nc"; fi
     fi
   fi
   { echo "t $NOW"; echo "oom $S_OOM"; echo "pswpin $S_PSWPIN"; echo "memhot $a_memhot"; echo "cpuhot $a_cpuhot"
     echo "lowmem_s $a_lowmem_s"; echo "lowcpu_s $a_lowcpu_s"; echo "peak_used_kb $a_peak_used_kb"
     echo "peak_load5 $a_peak_load5"; echo "cool_until $a_cool_until"; echo "size_mb $CUR_MB"; echo "size_cpus $CUR_CPUS"
+    echo "grown_mb $a_grown_mb"; echo "grown_cpus $a_grown_cpus"
   } > "$_f.tmp" && mv -f "$_f.tmp" "$_f"
   echo "$_out"
 }
@@ -142,9 +154,12 @@ _as_now() { echo "${MAVERICKS_DOCKER_NOW:-$(date +%s)}"; }
 
 # One ssh: the guest's counters as S_* assignments (KEY VALUE lines); nothing when it can't be read.
 autosize_sample() {
-  docker-machine ssh "$MACHINE" 'cat /proc/vmstat /proc/meminfo; echo "loadavg $(cat /proc/loadavg)"; for r in memory cpu; do sed -n "s/^some /psi_$r /p" /proc/pressure/$r 2>/dev/null; done' 2>/dev/null \
+  # The OOMs counted are the kernel log's global "Out of memory: Kill..." lines; a container killed at
+  # its own memory limit logs "Memory cgroup out of memory" instead, and isn't the VM running out.
+  # (/proc/vmstat's oom_kill counts both.)
+  docker-machine ssh "$MACHINE" 'cat /proc/vmstat /proc/meminfo; echo "loadavg $(cat /proc/loadavg)"; for r in memory cpu; do sed -n "s/^some /psi_$r /p" /proc/pressure/$r 2>/dev/null; done; dmesg 2>/dev/null | grep "Out of memory: Kill"' 2>/dev/null \
     | awk '
-      $1 == "oom_kill"      { o = $2 }
+      /\] Out of memory: Kill/ { o++; next }
       $1 == "pswpin"        { print "S_PSWPIN", $2 }
       $1 == "MemTotal:"     { print "S_MEMTOTAL_KB", $2 }
       $1 == "MemAvailable:" { print "S_MEMAVAIL_KB", $2 }
@@ -169,8 +184,20 @@ _as_apply_pending() { # the VM's state allows it; resize by restart to the held 
   if resize_vm --memory "$_pm" --cpus "$_pc" --restart >>"$LOG" 2>&1; then rm -f "$AUTOSIZE_PENDING"; return 0; fi
   log "autosize: the held change didn't apply"; return 1
 }
-# Before the login agent starts a stopped VM: start it at the held size instead.
+# Before the VM starts or restarts (the login agent, ctl start/restart, the menu): at the held size.
 autosize_apply_pending() { autosize_on && [ -f "$AUTOSIZE_PENDING" ] && _as_apply_pending; }
+# Hold a grow to MB CPUS for a restart, merged with what's held already and the VM's size now (the
+# bigger of each, so it never undoes a grow), unless the VM is already that big.
+_as_hold() {
+  _hm=$1; _hc=$2
+  [ "$CUR_MB" -le "$_hm" ] || _hm=$CUR_MB; [ "$CUR_CPUS" -le "$_hc" ] || _hc=$CUR_CPUS
+  if read -r _pm _pc 2>/dev/null < "$AUTOSIZE_PENDING"; then
+    [ "$_pm" -le "$_hm" ] || _hm=$_pm; [ "$_pc" -le "$_hc" ] || _hc=$_pc
+  fi
+  if [ "$_hm" -le "$CUR_MB" ] && [ "$_hc" -le "$CUR_CPUS" ]; then rm -f "$AUTOSIZE_PENDING"; return 0; fi
+  autosize_on || return 0   # the user pinned the size meanwhile
+  echo "$_hm $_hc" > "$AUTOSIZE_PENDING"
+}
 
 autosize_tick() {
   autosize_first_decision
@@ -205,16 +232,31 @@ SAMPLE
   case "$_d" in
     "grow "*" live")
       set -- $_d; log "autosize: growing live to $2 MB, $3 CPUs (was $CUR_MB MB, $CUR_CPUS CPUs)"
-      resize_vm --memory "$2" --cpus "$3" >>"$LOG" 2>&1 || log "autosize: the live grow didn't take" ;;
+      if _ro=$(resize_vm --memory "$2" --cpus "$3" 2>&1); then
+        printf '%s\n' "$_ro" >>"$LOG"
+        # A restart change held from before keeps what this grow added (never undoes it).
+        if read -r _pm _pc 2>/dev/null < "$AUTOSIZE_PENDING"; then
+          _sz=$(vm_size); CUR_MB=${_sz% *}; CUR_CPUS=${_sz#* }; _as_hold "$_pm" "$_pc"
+        fi
+      else
+        printf '%s\n' "$_ro" >>"$LOG"
+        case "$_ro" in
+          *--restart*) log "autosize: this VM can't grow live now; holding $2 MB, $3 CPUs for a restart"; _as_hold "$2" "$3" ;;
+          *) log "autosize: the live grow didn't take" ;;
+        esac
+      fi ;;
     "grow "*" restart")
       set -- $_d
       if [ -f "$AUTOSIZE_PENDING" ]; then
         notify autosize-pending "Container Tools for Mavericks" \
           "Docker needs more memory or CPUs; it resizes to $(_as_gb "$2") GB, $3 CPUs when no containers are running, or restart Docker now."
       fi
-      log "autosize: holding a grow to $2 MB, $3 CPUs for a restart"; echo "$2 $3" > "$AUTOSIZE_PENDING" ;;
+      log "autosize: holding a grow to $2 MB, $3 CPUs for a restart"; _as_hold "$2" "$3" ;;
     "shrink "*)
-      set -- $_d; log "autosize: holding a shrink to $2 MB, $3 CPUs for a restart (3 days of light use)"; echo "$2 $3" > "$AUTOSIZE_PENDING" ;;
+      set -- $_d
+      if [ "$(cat "$AUTOSIZE_PENDING" 2>/dev/null)" != "$2 $3" ]; then
+        log "autosize: holding a shrink to $2 MB, $3 CPUs for a restart (light use for days)"; fi
+      autosize_on && echo "$2 $3" > "$AUTOSIZE_PENDING" ;;
     "ceiling memory")
       log "autosize: needs more memory than the ceiling ($CEIL_MB MB)"
       notify autosize-ceiling "Container Tools for Mavericks" \
@@ -224,6 +266,20 @@ SAMPLE
       notify autosize-ceiling "Container Tools for Mavericks" \
         "Docker needs more CPUs than self-sizing allows ($CEIL_CPUS). To give it more: docker-machine-ctl resize --cpus N --restart" ;;
   esac
-  if [ -f "$AUTOSIZE_PENDING" ] && _as_idle; then _as_apply_pending || true; fi
+  # A held change applies only once Docker has been quiet for two ticks running: no container listed
+  # (a build between steps lists none, and BuildKit's never do), no pressure, light load.
+  _quiet=0
+  case "$_d" in none|shrink*)
+    if ! grep -q -e '^memhot [1-9]' -e '^cpuhot [1-9]' "$AUTOSIZE_STATE" 2>/dev/null \
+       && [ $(( S_MEMAVAIL_KB * 100 )) -ge $(( S_MEMTOTAL_KB * 15 )) ] \
+       && [ "$(_as_x100 "$S_LOAD5")" -lt $(( 50 * CUR_CPUS )) ] && _as_idle; then _quiet=1; fi ;;
+  esac
+  if [ "$_quiet" = 1 ] && [ -f "$AUTOSIZE_PENDING" ]; then
+    _qn=$(( $(cat "$STATE_DIR/autosize-quiet" 2>/dev/null || echo 0) + 1 ))
+    if [ "$_qn" -ge 2 ]; then rm -f "$STATE_DIR/autosize-quiet"; _as_apply_pending || true
+    else echo "$_qn" > "$STATE_DIR/autosize-quiet"; fi
+  else
+    rm -f "$STATE_DIR/autosize-quiet"
+  fi
   return 0
 }

@@ -85,9 +85,12 @@ EOF
   OLDPATH=$PATH; PATH="$BIN:$PATH"
 }
 teardown() { PATH=$OLDPATH; rm -rf "$WORK"; }
-# What the guest reports: oom_kill pswpin MemTotal MemAvailable load5 [psi-mem psi-cpu]
+# What the guest reports: global-OOMs pswpin MemTotal MemAvailable load5 [psi-mem psi-cpu]; the OOMs
+# are the kernel log's global "Out of memory" lines (MEMCG_OOMS more lines of a container's own limit).
 sample() {
-  { echo "oom_kill $1"; echo "pswpin $2"; echo "MemTotal:  $3 kB"; echo "MemAvailable:  $4 kB"
+  { _n=0; while [ "$_n" -lt "$1" ]; do echo "[  9.0$_n] Out of memory: Killed process 4$_n (x) total-vm:1kB"; _n=$(( _n + 1 )); done
+    _n=0; while [ "$_n" -lt "${MEMCG_OOMS:-0}" ]; do echo "[  9.1$_n] Memory cgroup out of memory: Killed process 5$_n (y)"; _n=$(( _n + 1 )); done
+    echo "pswpin $2"; echo "MemTotal:  $3 kB"; echo "MemAvailable:  $4 kB"
     echo "loadavg 0.00 $5 0.00 1/100 1"
     [ -z "${6:-}" ] || echo "psi_memory avg10=0.00 avg60=$6 avg300=0.00 total=0"
     [ -z "${7:-}" ] || echo "psi_cpu avg10=0.00 avg60=$7 avg300=0.00 total=0"; } > "$G/sample"
@@ -139,8 +142,10 @@ case_restart_change_waits_while_containers_run() {
 }
 case_restart_change_applies_when_idle() {
   setup; set_vmx 3072 1; echo abc123 > "$G/containers"; tick; sample 1 0 2887680 100000 0.10; tick
-  rm -f "$G/containers"; tick
-  [ "$(vmx_size)" = 6144/1 ] || fail "with nothing running, the held change applies (got $(vmx_size); $(cat "$WORK/out"))"
+  rm -f "$G/containers"; sample 1 0 2887680 1500000 0.10; tick
+  grep -q '^dm stop' "$G/calls" && fail "one idle minute isn't enough: a build between steps lists no containers (review I3)"
+  tick
+  [ "$(vmx_size)" = 6144/1 ] || fail "with nothing running for two ticks, the held change applies (got $(vmx_size); $(cat "$WORK/out"))"
   grep -q '^dm stop' "$G/calls" && grep -q '^dm start' "$G/calls" || fail "by a restart"
   [ -e "$ST/autosize-pending" ] && fail "and is no longer pending"
   teardown
@@ -261,6 +266,50 @@ case_overview_lines() {
   teardown
 }
 
+# Review I1: a live grow the VM can't take (its image predates hot-add) becomes a held restart change.
+case_live_refused_becomes_pending() {
+  setup; rm -f "$G/marker"; echo abc123 > "$G/containers"; tick; sample 1 0 962560 50000 0.10; tick
+  grep -q '^hotplug' "$G/calls" && fail "no hot-add on a VM that can't take one"
+  [ "$(cat "$ST/autosize-pending" 2>/dev/null)" = "2048 1" ] || fail "the grow is held for a restart (pending: $(cat "$ST/autosize-pending" 2>/dev/null); $(cat "$WORK/out"))"
+  teardown
+}
+# Review I2: a container killed at its own memory limit is not the VM running out.
+case_memcg_oom_not_global() {
+  setup; tick; MEMCG_OOMS=3 sample 0 0 962560 600000 0.10; tick
+  grep -q '^hotplug' "$G/calls" && fail "a container's own OOM doesn't grow the VM"
+  [ -e "$ST/autosize-pending" ] && fail "nor holds a grow"
+  teardown
+}
+# Review I3: a held grow doesn't apply while the pressure that caused it is still there.
+case_pending_grow_waits_while_pressure() {
+  setup; set_vmx 3072 1; echo abc123 > "$G/containers"; tick; sample 1 0 2887680 100000 0.10; tick
+  rm -f "$G/containers"; sample 1 0 2887680 100000 3.50; tick; tick; tick
+  grep -q '^dm stop' "$G/calls" && fail "busy with no container listed (a build): no restart"
+  teardown
+}
+# Review I4: a live grow while a restart change is held merges into it, never undoes it.
+case_live_grow_merges_pending() {
+  setup; set_vmx 3072 1; echo abc123 > "$G/containers"; tick; sample 1 0 2887680 100000 0.10; tick
+  [ "$(cat "$ST/autosize-pending")" = "6144 1" ] || fail "setup: held 6144 1"
+  sample 1 0 2887680 100000 2.00; MAVERICKS_DOCKER_NOW=$(( MAVERICKS_DOCKER_NOW + 600 ))
+  for i in 1 2 3 4 5; do tick; done
+  [ "$(vmx_size)" = 3072/2 ] || fail "a CPU grows live (got $(vmx_size); $(cat "$WORK/out"))"
+  [ "$(cat "$ST/autosize-pending")" = "6144 2" ] || fail "the held change keeps the new CPU (pending: $(cat "$ST/autosize-pending"))"
+  teardown
+}
+# Review I5: "restart Docker" applies a held change.
+case_ctl_restart_applies_pending() {
+  setup; echo "2048 1" > "$ST/autosize-pending"
+  ctl restart; [ "$(vmx_size)" = 2048/1 ] || fail "restarting Docker applies the held change (got $(vmx_size); $(cat "$WORK/ctl-out"))"
+  [ -e "$ST/autosize-pending" ] && fail "and it's no longer held"
+  teardown
+}
+case_ctl_start_applies_pending() {
+  setup; echo Stopped > "$G/status"; echo "2048 1" > "$ST/autosize-pending"
+  ctl start; [ "$(vmx_size)" = 2048/1 ] || fail "starting Docker applies the held change (got $(vmx_size); $(cat "$WORK/ctl-out"))"
+  teardown
+}
+
 case_off_does_nothing
 case_op_in_progress_does_nothing
 case_paused_for_disk_does_nothing
@@ -284,4 +333,10 @@ case_user_resize_pins_and_clears_pending
 case_failed_user_resize_doesnt_pin
 case_overview_lines
 case_overview_decides_first
+case_live_refused_becomes_pending
+case_memcg_oom_not_global
+case_pending_grow_waits_while_pressure
+case_live_grow_merges_pending
+case_ctl_restart_applies_pending
+case_ctl_start_applies_pending
 echo "autosize_tick_test: OK"

@@ -51,15 +51,35 @@ case_no_cap_grows_live() {
   teardown
 }
 case_psi_memory_sustained() {
-  setup; S_PSI_MEM=0.00; S_PSI_CPU=0.00; decide >/dev/null; S_PSI_MEM=12.50
+  setup; S_PSI_MEM=0.00; S_PSI_CPU=0.00; S_MEMAVAIL_KB=90000; decide >/dev/null; S_PSI_MEM=12.50
   for i in 1 2 3 4; do r=$(tick); [ "$r" = none ] || fail "tick $i of pressure is not yet sustained (got $r)"; done
   r=$(tick); [ "$r" = "grow 2048 1 live" ] || fail "5 ticks of memory pressure grow memory (got $r)"
   teardown
 }
 case_swapin_fallback() {
-  setup; decide >/dev/null
+  setup; S_MEMAVAIL_KB=90000; decide >/dev/null
   for i in 1 2 3 4; do S_PSWPIN=$(( S_PSWPIN + 1500 )); r=$(tick); [ "$r" = none ] || fail "swap tick $i (got $r)"; done
   S_PSWPIN=$(( S_PSWPIN + 1500 )); r=$(tick); [ "$r" = "grow 2048 1 live" ] || fail "5 ticks of swapping grow memory (got $r)"
+  teardown
+}
+# Review I2: stalls and swapping inside a container's own memory limit aren't the VM being short.
+# Memory pressure counts only while the VM as a whole is low on memory (MemAvailable under 15%).
+case_pressure_without_shortage() {
+  setup; S_PSI_MEM=0.00; S_PSI_CPU=0.00; decide >/dev/null; S_PSI_MEM=40.00   # 62% available
+  for i in 1 2 3 4 5 6; do S_PSWPIN=$(( S_PSWPIN + 5000 )); r=$(tick); [ "$r" = none ] || fail "a container at its own limit doesn't grow the VM (got $r)"; done
+  teardown
+}
+# Review I6: a grow that cured an OOM isn't undone after 3 quiet days (the spike recurs unseen
+# between samples): not below the last grow's size until 4 windows (12 days) pass quietly.
+case_shrink_keeps_last_grow() {
+  setup; CUR_MB=1024; LIVE_CAP_MB=; decide >/dev/null; S_OOM=1
+  r=$(tick); [ "$r" = "grow 2048 1 live" ] || fail "setup grow (got $r)"
+  CUR_MB=2048; S_MEMTOTAL_KB=1925000; S_MEMAVAIL_KB=1300000; NOW=$(( NOW + 600 )); decide >/dev/null
+  NOW=$(( NOW + 600 ))   # past the cooldown the size change started
+  sed 's/^lowmem_s .*/lowmem_s 259200/' "$F" > "$F.t" && mv "$F.t" "$F"
+  r=$(tick); [ "$r" = none ] || fail "3 quiet days don't undo the grow that cured an OOM (got $r)"
+  sed 's/^lowmem_s .*/lowmem_s 1036800/' "$F" > "$F.t" && mv "$F.t" "$F"
+  r=$(tick); [ "$r" = "shrink 1024 1" ] || fail "12 quiet days do (got $r)"
   teardown
 }
 case_cpu_sustained() {
@@ -153,6 +173,8 @@ case_past_cap_is_restart
 case_no_cap_grows_live
 case_psi_memory_sustained
 case_swapin_fallback
+case_pressure_without_shortage
+case_shrink_keeps_last_grow
 case_cpu_sustained
 case_psi_cpu_sustained
 case_streak_breaks
