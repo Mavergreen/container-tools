@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: macOS-only -- osascript notifications, and BSD `stat -f %m` for lock-age checks
+# platform: macOS-only -- osascript notifications and launchctl (lock ages read on BSD or GNU stat)
 # docker-machine-common.sh — shared constants + helpers for docker-machine-bootstrap
 # and docker-machine-ctl. SOURCED, not executed. Honors the MAVERICKS_DOCKER_* test seams.
 
@@ -56,9 +56,13 @@ fusion_present() {
 
 machine_status() { docker-machine status "$MACHINE" 2>/dev/null; }
 
+# A path's mtime in epoch seconds. GNU's -c first: BSD stat (10.9's too) rejects -c and falls through
+# to -f %m, while GNU's -f means filesystem status and would "succeed" with the wrong number.
+_mtime() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null; }
+
 create_in_progress() {
   [ -d "$LOCK" ] || return 1
-  _mt=$(stat -f %m "$LOCK" 2>/dev/null) || return 0
+  _mt=$(_mtime "$LOCK") || return 0
   if [ $(( $(date +%s) - _mt )) -gt 600 ]; then
     log "stale create lock; reclaiming"
     rmdir "$LOCK" 2>/dev/null || true
@@ -81,7 +85,7 @@ op_in_progress() {
     rm -rf "$OP_LOCK" 2>/dev/null || true
     return 1
   fi
-  _mt=$(stat -f %m "$OP_LOCK" 2>/dev/null) || return 0
+  _mt=$(_mtime "$OP_LOCK") || return 0
   if [ $(( $(date +%s) - _mt )) -gt 600 ]; then
     log "stale op lock; reclaiming"
     rm -rf "$OP_LOCK" 2>/dev/null || true
