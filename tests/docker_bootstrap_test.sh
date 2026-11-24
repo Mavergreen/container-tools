@@ -712,6 +712,7 @@ EOF
   chmod +x "$BIN/docker-machine"
   sh "$BOOT" || fail "fresh-create advisory path should exit 0"
   grep -q '2 GiB' "$OSA_LOG" || fail "expected gui-resources advisory mentioning 2 GiB after fresh create with 1024 MiB/1 vCPU"
+  grep -q 'docker-machine-ctl resize --memory 4096 --cpus 2' "$OSA_LOG" || fail "the advisory says how to resize: $(cat "$OSA_LOG")"
   teardown
 }
 

@@ -26,7 +26,7 @@ advise_gui_resources() {
   [ -n "$_ag_mem" ] && [ -n "$_ag_cpu" ] || return 0
   if [ "$_ag_mem" -lt 2048 ] || [ "$_ag_cpu" -lt 2 ]; then
     notify gui-resources "Container Tools for Mavericks" \
-      "This VM was created with fewer resources than the tested GUI baseline (2 GiB RAM, two vCPUs). For GUI apps, 4 GiB offers headroom -- adjust in VMware Fusion when ready (stop apps and the VM first)."
+      "This VM was created with fewer resources than the tested GUI baseline (2 GiB RAM, two vCPUs). For GUI apps, 4 GiB offers headroom: docker-machine-ctl resize --memory 4096 --cpus 2 --restart"
   fi
 }
 
@@ -37,13 +37,13 @@ create_machine() {
   mkdir "$LOCK" 2>/dev/null || { log "create lock held; skipping create"; return 1; }  # portability-ok: runs only on the Mac (BSD mkdir is atomic)
   log "creating machine '$MACHINE'"
   if [ "${MAVERICKS_DOCKER_NONINTERACTIVE:-}" = 1 ]; then
-    docker-machine create -d vmwarefusion --vmwarefusion-boot2docker-url "$ISO" "$MACHINE" >>"$LOG" 2>&1
+    eval "docker-machine create $(vm_create_args) \"\$MACHINE\"" >>"$LOG" 2>&1
     _create_exit=$?
     rmdir "$LOCK" 2>/dev/null || true
     [ "$_create_exit" -eq 0 ] && advise_gui_resources
   else
     notify create "Container Tools for Mavericks" "Creating the Docker VM (one-time, ~1-2 min)..."
-    _cmd="docker-machine create -d vmwarefusion --vmwarefusion-boot2docker-url '$ISO' $MACHINE && rmdir '$LOCK' && env MAVERICKS_DOCKER_JUST_CREATED=1 '$SELF'"
+    _cmd="docker-machine create $(vm_create_args) $MACHINE && rmdir '$LOCK' && env MAVERICKS_DOCKER_JUST_CREATED=1 '$SELF'"
     osascript -e "tell application \"Terminal\" to do script \"$_cmd\"" >/dev/null 2>&1 || true
     osascript -e 'tell application "Terminal" to activate' >/dev/null 2>&1 || true
   fi
@@ -83,14 +83,14 @@ neutralize_env_override() {
 }
 
 main() {
-  if ! fusion_present; then
-    log "VMware Fusion not found; skipping"
-    notify fusion "Container Tools for Mavericks" "Install VMware Fusion to run the Docker VM."
+  if ! vm_provider_present; then
+    log "$(vm_provider_name) not found; skipping"
+    notify fusion "Container Tools for Mavericks" "Install $(vm_provider_name) to run the Docker VM."
     announce
     exit 0
   fi
   if host_disk_full; then
-    log "VMware paused the VM: the Mac's disk is full; skipping this tick"
+    log "$(vm_provider_name) paused the VM: the Mac's disk is full; skipping this tick"
     notify hostdisk "Container Tools for Mavericks" \
       "Docker is paused because the Mac's disk is full. Free some space and it carries on by itself."
     announce

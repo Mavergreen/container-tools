@@ -21,7 +21,7 @@ trap 'rm -rf "$T"' EXIT
 ct="$T/somewhere else/container-tools-1"   # a space, as an unpacked path may have
 mkdir -p "$ct/bin" "$ct/libexec" "$ct/share" "$T/links" "$T/home" "$T/stub"
 for f in docker-machine-ctl docker-machine-bootstrap; do cp "$ROOT/payload/$f" "$ct/bin/$f"; done
-cp "$ROOT/payload/docker-machine-common.sh" "$ct/libexec/"
+cp "$ROOT/payload/docker-machine-common.sh" "$ROOT/payload/vm-provider-fusion.sh" "$ct/libexec/"
 printf 'ISO\n' > "$ct/share/boot2docker.iso"
 ln -s "../somewhere else/container-tools-1/bin/docker-machine-ctl" "$T/links/docker-machine-ctl"
 mkdir -p "$T/home/.docker/machine/machines/container-tools"

@@ -408,6 +408,7 @@ jobs:
             --docked payload/docked --sync-helper payload/container-tools-sync-image \
             --bootstrap payload/docker-machine-bootstrap \
             --common payload/docker-machine-common.sh \
+            --vm-provider payload/vm-provider-fusion.sh \
             --ctl payload/docker-machine-ctl \
             --migrate payload/docker-machine-migrate \
             --get-fusion payload/container-tools-get-fusion \

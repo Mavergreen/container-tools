@@ -28,6 +28,14 @@ USER_STOPPED="$STATE_DIR/user-stopped"   # the menu's Stop, for this boot: the l
 PROFILES=${MAVERICKS_DOCKER_PROFILES:-$HOME/.bash_profile $HOME/.profile $HOME/.zshrc $HOME/.bashrc}
 AGENT_LABEL=dev.mavergreen.container-tools-machine
 AGENT_PLIST=/Library/LaunchAgents/$AGENT_LABEL.plist
+
+# The VM's provider: everything that knows it is VMware Fusion is in vm-provider-fusion.sh, beside this
+# file, and the rest of the payload reaches the VM only through its vm_* functions (2026-11-24).
+for _vp in "${MAVERICKS_DOCKER_VM_PROVIDER:-}" "${CT_HOME:+$CT_HOME/libexec/vm-provider-fusion.sh}" \
+           "${MAVERICKS_DOCKER_COMMON:+${MAVERICKS_DOCKER_COMMON%/*}/vm-provider-fusion.sh}"; do
+  [ -n "$_vp" ] && [ -f "$_vp" ] && { . "$_vp"; break; }
+done
+command -v vm_pid >/dev/null 2>&1 || { echo "docker-machine-common.sh: no VM provider (vm-provider-fusion.sh) found" >&2; return 1 2>/dev/null || exit 1; }
 MACHDIR=${MAVERICKS_DOCKER_MACHDIR:-$HOME/.docker/machine/machines}
 
 legacy_default_exists() { [ -d "$MACHDIR/default" ]; }
@@ -48,11 +56,7 @@ notify() { # key title message  (throttled once/day per key)
   osascript -e "display notification \"$3\" with title \"$2\"" >/dev/null 2>&1 || true
 }
 
-fusion_present() {
-  [ "${MAVERICKS_DOCKER_FUSION_PRESENT:-}" = 0 ] && return 1
-  [ "${MAVERICKS_DOCKER_FUSION_PRESENT:-}" = 1 ] && return 0
-  [ -d "/Applications/VMware Fusion.app" ] || command -v vmrun >/dev/null 2>&1
-}
+
 
 machine_status() { docker-machine status "$MACHINE" 2>/dev/null; }
 
@@ -141,76 +145,25 @@ op_end() { # release the lock and tell the menu, which asks for the settled stat
   announce
 }
 
-vmx_pid() { pgrep -f "machines/$MACHINE/.*\.vmx" 2>/dev/null | head -1 || true; }
 
-# Suspend stays allowed, and hard; hot-add is on. A soft suspend runs the guest's VMware Tools network
-# script, which on boot2docker flushes every interface's address and can't restore it, so the VM
-# resumes unreachable; that is why Wowfunhappy's docker-machine wrote suspend.disabled = "TRUE", and
-# why every VM through 20261025.17 had it. A hard suspend skips the guest scripts and resumes intact
-# (spike, 2026-11-24). Suspend must stay allowed, and mem/vcpu.hotadd on, because VMware hot-adds
-# memory and CPUs (ctl resize, growing live) by a suspend-and-resume. components/docker-machine/
-# patches/0002 and 0003 create VMs this way; this converts one created before them. Only while
-# stopped and not suspended: Fusion reads the .vmx at power-on and may rewrite it while running, and a
-# suspended VM resumes against the .vmx it was suspended with.
-_VMX_READY='powerType.suspend = "hard"
-mem.hotadd = "TRUE"
-vcpu.hotadd = "TRUE"'
-vmx_allows_hotadd() {
-  _ah_vmx="$MACHDIR/$MACHINE/$MACHINE.vmx"
-  [ -f "$_ah_vmx" ] || return 1
-  grep -q '^suspend\.disabled *= *"TRUE"' "$_ah_vmx" && return 1
-  grep -q '^powerType\.suspend *= *"hard"' "$_ah_vmx" && grep -q '^mem\.hotadd *= *"TRUE"' "$_ah_vmx" \
-    && grep -q '^vcpu\.hotadd *= *"TRUE"' "$_ah_vmx"
-}
-prepare_vmx() {
-  _pv_vmx="$MACHDIR/$MACHINE/$MACHINE.vmx"
-  [ -f "$_pv_vmx" ] && [ -z "$(vmx_pid)" ] || return 0
-  grep -q '^checkpoint\.vmState *= *"[^"]' "$_pv_vmx" && return 0
-  vmx_allows_hotadd && return 0
-  _pv_tmp="$_pv_vmx.ct-tmp"
-  { awk '!/^suspend\.disabled *= *"TRUE"/ && !/^powerType\.suspend *=/ && !/^mem\.hotadd *=/ && !/^vcpu\.hotadd *=/' "$_pv_vmx"
-    printf '%s\n' "$_VMX_READY"; } > "$_pv_tmp" && cat "$_pv_tmp" > "$_pv_vmx"   # cat keeps its mode
-  rm -f "$_pv_tmp"
-  log "prepared $_pv_vmx for hard suspend and hot-add"
-}
 # Every start of the VM goes through here (docker_common_test holds the payload to it).
-machine_start() { prepare_vmx; docker-machine start "$MACHINE"; }
+machine_start() { vm_prepare; docker-machine start "$MACHINE"; }
 
-# VMware pauses the VM when the Mac's disk fills, and asks a noSpace (guest RAM's .vmem) or
-# outofspace (the virtual disk) question in vmware.log once a second until it can carry on. Meanwhile
-# docker-machine's status flaps and every docker-machine command waits, so this is the one thing
-# worth telling the user. "Still asking" = the vmx is up and the log was written in the last 10s.
-host_disk_full() {
-  # "Still asking" is judged by the newest question's own timestamp, never the log's mtime: on
-  # 2026-11-22 a question answered at 11:42 was still among the last 12 lines at 12:08, and an
-  # unrelated line had just freshened the file, so the running VM read as paused. VMware stamps local
-  # time; both sides are turned into seconds by plain awk arithmetic (no BSD/GNU date parsing).
-  _vl="$MACHDIR/$MACHINE/vmware.log"
-  [ -f "$_vl" ] && [ -n "$(vmx_pid)" ] || return 1
-  _ts=$(tail -n 12 "$_vl" 2>/dev/null | grep -Ei 'nospace|outofspace' | tail -1 | cut -c1-19)
-  [ -n "$_ts" ] || return 1
-  printf '%s %s\n' "$_ts" "$(date '+%Y-%m-%dT%H:%M:%S')" | awk '
-    function secs(t,  y, m, d) {   # days from civil (proleptic Gregorian), then seconds
-      y = substr(t, 1, 4) + 0; m = substr(t, 6, 2) + 0; d = substr(t, 9, 2) + 0
-      if (m <= 2) { y--; m += 12 }
-      return ((365 * y + int(y / 4) - int(y / 100) + int(y / 400) + int((153 * (m - 3) + 2) / 5) + d) * 86400 \
-        + substr(t, 12, 2) * 3600 + substr(t, 15, 2) * 60 + substr(t, 18, 2))
-    }
-    { a = secs($1); n = secs($2); exit !(n - a >= -60 && n - a <= 10) }'
-}
+# The provider paused the VM because the Mac's disk is full: docker-machine's status flaps and every
+# docker-machine command waits meanwhile, so this is the one thing worth telling the user.
+host_disk_full() { vm_paused_for_host_disk; }
 
-# Fusion backs guest RAM with a memsize-sized .vmem file in the VM's directory, allocated in full at
-# every power-on; for a 16 GB VM, that file is what filled the Mac's disk on 2026-10-24. (Fusion 8.5
-# for Mac reads mainMem.useNamedFile = "FALSE" and ignores it -- tried the same day.) So before
-# powering on, require the .vmem's size plus 4 GB of headroom, and say what's needed when short:
-# sets ROOM_MSG. A vmx we can't read memsize from doesn't block a start.
+# Powering on can take Mac disk as well as RAM (Fusion's .vmem is the whole memsize; see
+# vm_boot_disk_kb), and a Mac that fills up pauses the VM. So before powering on, require that plus
+# 4 GB of headroom, and say what's needed when short: sets ROOM_MSG. A size we can't read doesn't
+# block a start.
 host_room_to_boot() {
   ROOM_MSG=
-  _mb=$(sed -n 's/^memsize *= *"\([0-9]*\)".*/\1/p' "$MACHDIR/$MACHINE/$MACHINE.vmx" 2>/dev/null | head -1)
+  _mb=$(vm_size); _mb=${_mb% *}
   [ -n "$_mb" ] || return 0
   _avail=$(df -k "$MACHDIR" 2>/dev/null | awk 'NR == 2 { print $4 }')
   [ -n "$_avail" ] || return 0
-  _need=$(( _mb * 1024 + 4 * 1024 * 1024 ))
+  _need=$(( $(vm_boot_disk_kb "$_mb") + 4 * 1024 * 1024 ))
   [ "$_avail" -ge "$_need" ] && return 0
   ROOM_MSG="Starting Docker needs about $(( (_need + 1048575) / 1048576 )) GB free on this Mac; $(( _avail / 1048576 )) GB free now."
   return 1
@@ -221,7 +174,7 @@ status_word() { _local_status || _status_from "$(machine_status)"; }
 # What the Mac alone can tell, without asking docker-machine (which waits while VMware has the VM
 # paused): prints the word and succeeds, or prints nothing and fails.
 _local_status() {
-  fusion_present || { echo no-fusion; return 0; }
+  vm_provider_present || { echo no-fusion; return 0; }   # the menu's word for "no provider"
   host_disk_full && { echo host-disk-full; return 0; }
   create_in_progress && { echo creating; return 0; }
   op_in_progress && { echo "working:$(op_name)"; return 0; }
@@ -242,32 +195,15 @@ BOOT_REFUSED="$STATE_DIR/boot-refused"   # the login agent refused to boot: the 
 clear_boot_refused() { rm -f "$BOOT_REFUSED" 2>/dev/null || true; }
 
 # Resize the VM: docker-machine-ctl resize [--memory MB] [--cpus N] [--restart]. A grow of a running
-# VM that is ready for it happens live, through VMware's hot-add (libexec/container-tools-hotplug):
-# Fusion pauses the VM for a few seconds and running containers carry on. Anything else -- a shrink
-# (Fusion can't take memory away live), a stopped VM, or one not yet ready to hot-add (its .vmx or its
-# guest kernel predate it) -- takes a restart, which stops running containers, so it happens only
+# VM that is ready for it happens live, through the provider's hot-add: the VM pauses for a few seconds
+# and running containers carry on. Anything else -- a shrink (memory can't be taken away live), a
+# stopped VM, or one not yet ready to hot-add (its configuration or its guest kernel predate it) -- takes a restart, which stops running containers, so it happens only
 # with --restart. Self-sizing calls this too (design, 2026-11-24).
-HOTPLUG=${MAVERICKS_DOCKER_HOTPLUG:-${CT_HOME:+$CT_HOME/libexec/container-tools-hotplug}}
 RESIZE_USAGE="usage: docker-machine-ctl resize [--memory MB] [--cpus N] [--restart]"
 HOTPLUG_MARKER=/etc/udev/rules.d/99-mavergreen-cpu-online.rules   # in an ISO whose kernel can take a hot-add
 _pos_int() { case "$1" in ''|*[!0-9]*) return 1 ;; esac; [ "$1" -gt 0 ]; }
-_vmx_suspended() { grep -q '^checkpoint\.vmState *= *"[^"]' "$MACHDIR/$MACHINE/$MACHINE.vmx" 2>/dev/null; }
-_vmx_value() { sed -n "s/^$1 *= *\"\\([0-9]*\\)\".*/\\1/p" "$MACHDIR/$MACHINE/$MACHINE.vmx" 2>/dev/null | head -1; }
-# The memory the running VM booted with: vmware.log starts afresh at each power-on, and its first
-# DICT memsize is that size (a hot-add rewrites the .vmx's, not this). Empty when unknown.
-_boot_memsize() { sed -n 's/.*DICT  *memsize = "\([0-9]*\)".*/\1/p' "$MACHDIR/$MACHINE/vmware.log" 2>/dev/null | head -1; }
-# Fusion grows a VM that booted with less than 3 GB only up to 3 GB live ("greater than allowed
-# maximum of 3072MB"); one booted at 4 GB grew live to 16 GB (2026-11-24).
-LIVE_SMALL_BOOT_MAX_MB=3072
 # The guest's MemTotal (kB), then its online CPUs, one per line.
 _guest_size() { docker-machine ssh "$MACHINE" "awk '/^MemTotal:/ { print \$2 }' /proc/meminfo; grep -c ^processor /proc/cpuinfo" 2>/dev/null; }
-_set_vmx_size() { # MB CPUS -- only for a VM that is neither running nor suspended
-  _sv_vmx="$MACHDIR/$MACHINE/$MACHINE.vmx"; _sv_tmp="$_sv_vmx.ct-tmp"
-  [ -z "$(vmx_pid)" ] && ! _vmx_suspended || return 1
-  { awk '!/^memsize *=/ && !/^numvcpus *=/' "$_sv_vmx"; printf 'memsize = "%s"\nnumvcpus = "%s"\n' "$1" "$2"; } > "$_sv_tmp" \
-    && cat "$_sv_tmp" > "$_sv_vmx"   # cat keeps its mode
-  rm -f "$_sv_tmp"
-}
 _room_for() { # KB needed, KB the change frees first -- or say what's short and fail
   _rf_avail=$(df -k "$MACHDIR" 2>/dev/null | awk 'NR == 2 { print $4 }')
   _pos_int "$_rf_avail" || return 0   # can't tell: don't block
@@ -293,12 +229,12 @@ resize_vm() { # [--memory MB] [--cpus N] [--restart]
 }
 _resize() {
   # VMware paused the VM for host disk: docker-machine's status flaps and ssh hangs, so ask nothing.
-  if host_disk_full; then echo "This Mac's disk is full, so VMware paused the Docker VM; free some space first."; return 1; fi
-  _running=no; [ -n "$(vmx_pid)" ] && _running=yes   # the vmx process, not docker-machine's flapping status
-  if [ "$_running" = no ] && _vmx_suspended; then
+  if host_disk_full; then echo "This Mac's disk is full, so $(vm_provider_name) paused the Docker VM; free some space first."; return 1; fi
+  _running=no; [ -n "$(vm_pid)" ] && _running=yes   # the VM's process, not docker-machine's flapping status
+  if [ "$_running" = no ] && vm_suspended; then
     echo "Docker's VM is suspended; start it first (docker-machine-ctl start), then resize."; return 1; fi
-  _om=$(_vmx_value memsize); _oc=$(_vmx_value numvcpus)
-  _pos_int "$_om" && _pos_int "$_oc" || { echo "Can't read the Docker VM's size from $MACHDIR/$MACHINE/$MACHINE.vmx."; return 1; }
+  _sz=$(vm_size); _om=${_sz% *}; _oc=${_sz#* }
+  _pos_int "$_om" && _pos_int "$_oc" || { echo "Can't read the Docker VM's size."; return 1; }
   _nm=${_rz_mem:-$_om}; _nc=${_rz_cpu:-$_oc}
   _pos_int "$_nm" && [ $(( _nm % 4 )) -eq 0 ] || { echo "Memory must be a whole number of MB, a multiple of 4."; return 1; }
   _pos_int "$_nc" || { echo "CPUs must be a whole number, at least 1."; return 1; }
@@ -310,8 +246,8 @@ _resize() {
     echo "This Mac has $_host_c CPUs; the VM can't have more."; return 1; fi
   _why=
   if [ "$_nm" -eq "$_om" ] && [ "$_nc" -eq "$_oc" ]; then
-    # Fusion writes the new size into the .vmx on a hot-add, so a grow the guest never showed leaves
-    # the .vmx right and the guest short: only "already" when the running guest agrees.
+    # A hot-add can record the new size (Fusion writes it into the .vmx) while the guest never shows
+    # it, leaving the configuration right and the guest short: only "already" when the running guest agrees.
     _g=$( [ "$_running" = yes ] && _guest_size ); _gm=$(echo "$_g" | sed -n 1p); _gc=$(echo "$_g" | sed -n 2p)
     if _pos_int "$_gm" && _pos_int "$_gc" && { [ "$_gm" -lt $(( _nm * 1024 * 9 / 10 )) ] || [ "$_gc" -lt "$_nc" ]; }; then
       _why="The VM is set to $_nm MB and $_nc CPUs but shows less; a restart applies it"
@@ -322,7 +258,7 @@ _resize() {
     _why="Shrinking needs a restart, which stops running containers"
   elif [ "$_running" = no ]; then
     _why="Docker isn't running, so the VM can't grow live"
-  elif ! vmx_allows_hotadd; then
+  elif ! vm_live_resize_ready; then
     _why="This VM can grow live only after Docker has restarted once on this version"
   elif ! docker-machine ssh "$MACHINE" test -f "$HOTPLUG_MARKER" >/dev/null 2>&1; then
     if [ "$(image_status)" = stale ]; then
@@ -330,9 +266,8 @@ _resize() {
     else
       _why="This VM can grow live only after Docker has restarted once on this version"
     fi
-  elif [ "$_nm" -gt "$LIVE_SMALL_BOOT_MAX_MB" ] && _bt=$(_boot_memsize) && _pos_int "$_bt" \
-       && [ "$_bt" -lt "$LIVE_SMALL_BOOT_MAX_MB" ]; then
-    _why="VMware grows a VM that started with less than 3 GB only up to 3 GB while it runs"
+  elif _cap=$(vm_live_memory_max_mb) && _pos_int "$_cap" && [ "$_nm" -gt "$_cap" ]; then
+    _why="$(vm_provider_name) can grow this VM only up to $(( _cap / 1024 )) GB while it runs, from the size it started at"
   fi
 
   if [ -n "$_why" ]; then   # a restart change
@@ -342,10 +277,10 @@ _resize() {
     log "resize: $_om MB, $_oc CPUs -> $_nm MB, $_nc CPUs, by restart"
     if [ "$_running" = yes ]; then
       docker-machine stop "$MACHINE" >>"$LOG" 2>&1 || true
-      _i=0; while [ -n "$(vmx_pid)" ] && [ "$_i" -lt 120 ]; do sleep 1; _i=$(( _i + 1 )); done
-      [ -z "$(vmx_pid)" ] || { log "resize: the VM didn't stop"; echo "The VM didn't stop; its size was not changed."; return 1; }
+      _i=0; while [ -n "$(vm_pid)" ] && [ "$_i" -lt 120 ]; do sleep 1; _i=$(( _i + 1 )); done
+      [ -z "$(vm_pid)" ] || { log "resize: the VM didn't stop"; echo "The VM didn't stop; its size was not changed."; return 1; }
     fi
-    _set_vmx_size "$_nm" "$_nc" || { echo "The VM is still running or suspended; its size was not changed."; return 1; }
+    vm_set_size "$_nm" "$_nc" || { echo "The VM is still running or suspended; its size was not changed."; return 1; }
     if user_stopped; then
       echo "Set to $_nm MB and $_nc CPUs; Docker stays stopped, as you left it."; resource_status; return 0; fi
     machine_start >>"$LOG" 2>&1 || true
@@ -354,17 +289,16 @@ _resize() {
     resource_status; return 0
   fi
 
-  # Live: Fusion grows the vmx and the running guest; check the guest really shows it.
-  [ -n "$HOTPLUG" ] && [ -x "$HOTPLUG" ] || { echo "The hot-add helper is missing (${HOTPLUG:-container-tools-hotplug})."; return 1; }
+  # Live: the provider grows the running guest; check the guest really shows it.
   if [ "$_nm" -gt "$_om" ]; then _room_for $(( (_nm - _om) * 1024 + 4 * 1048576 )) 0 || return 1; fi
   _before=$(_guest_size); _bm=$(echo "$_before" | sed -n 1p)
   _pos_int "$_bm" || { echo "Can't read the running VM's memory, so a hot-add couldn't be checked; nothing was changed."; return 1; }
   log "resize: $_om MB, $_oc CPUs -> $_nm MB, $_nc CPUs, live"
   if [ "$_nm" -gt "$_om" ]; then
-    _e=$("$HOTPLUG" "$MACHDIR/$MACHINE/$MACHINE.vmx" --memory "$_nm" 2>&1) || { log "resize: $_e"; echo "${_e:-The memory hot-add failed.}"; return 1; }
+    _e=$(vm_hot_add_memory "$_nm") || { log "resize: $_e"; echo "${_e:-The memory hot-add failed.}"; return 1; }
   fi
   if [ "$_nc" -gt "$_oc" ]; then
-    _e=$("$HOTPLUG" "$MACHDIR/$MACHINE/$MACHINE.vmx" --cpus "$_nc" 2>&1) || { log "resize: $_e"; echo "${_e:-The CPU hot-add failed.}"; return 1; }
+    _e=$(vm_hot_add_cpus "$_nc") || { log "resize: $_e"; echo "${_e:-The CPU hot-add failed.}"; return 1; }
   fi
   _want=$(( _bm + (_nm - _om) * 1024 * 9 / 10 )); _wait=${MAVERICKS_DOCKER_RESIZE_WAIT:-60}; _i=0
   while :; do
@@ -374,7 +308,7 @@ _resize() {
        && { [ "$_nc" -le "$_oc" ] || [ "$_gc" -ge "$_nc" ]; }; then break; fi
     _i=$(( _i + 1 )); [ "$_i" -lt "$_wait" ] || {
       log "resize: the guest still shows ${_gm:-?} kB, ${_gc:-?} CPUs after ${_wait}s"
-      echo "Fusion accepted the change, but the VM didn't show it within ${_wait}s; see docker-machine-ctl diagnostics."; return 1; }
+      echo "$(vm_provider_name) accepted the change, but the VM didn't show it within ${_wait}s; see docker-machine-ctl diagnostics."; return 1; }
     sleep 1
   done
   sync_context
@@ -472,21 +406,10 @@ disk_advice() {
 # partition sda1 last, so enlarge_plan checks it, along with everything else that would make the
 # procedure unsafe, BEFORE anything is stopped. The vmdk grows on the Mac's disk only as the VM
 # writes, but the Mac filling up is what pauses the VM, so the plan wants room for all of it.
-VDISKMANAGER=${MAVERICKS_DOCKER_VDISKMANAGER:-/Applications/VMware Fusion.app/Contents/Library/vmware-vdiskmanager}
 ENLARGE_BY_GB=20   # what the menu's Enlarge VM Disk… adds
 enlarge_plan() { # [new GB]  -- prints "CUR_GB NEW_GB MAC_GB_NEEDED MAC_GB_FREE", or why not and fails
-  _vmdk="$MACHDIR/$MACHINE/$MACHINE.vmdk"
   [ "$(machine_status)" = Running ] || { echo "Start Docker first, so the VM's disk layout can be checked."; return 1; }
-  _hdr=$(head -c 2048 "$_vmdk" 2>/dev/null | LC_ALL=C tr -cd '[:print:]\n')
-  case "$_hdr" in
-    *'createType="monolithicSparse"'*) ;;
-    *) echo "The VM's disk isn't a single sparse vmdk, so it can't be enlarged automatically."; return 1 ;;
-  esac
-  for _d in "$MACHDIR/$MACHINE/$MACHINE"-0*.vmdk; do
-    [ -e "$_d" ] && { echo "The VM has a snapshot; delete it in VMware Fusion first."; return 1; }
-  done
-  _sec=$(printf '%s\n' "$_hdr" | sed -n 's/^RW \([0-9][0-9]*\) SPARSE.*/\1/p' | head -1)
-  [ -n "$_sec" ] || { echo "Couldn't read the size of the VM's disk."; return 1; }
+  _sec=$(vm_disk_sectors) || { echo "$_sec"; return 1; }
   _last=$(docker-machine ssh "$MACHINE" sudo sfdisk --dump /dev/sda 2>/dev/null | awk -F'[=,]' '
     /^\/dev\/sda[0-9]+ :/ { split($1, a, " "); s = $2 + 0; if (s > max) { max = s; dev = a[1] } }
     END { print dev }')
@@ -508,12 +431,12 @@ enlarge_disk() { # [new GB]
   _new=$(echo "$_plan" | awk '{ print $2 }')
   log "enlarge-disk: $(echo "$_plan" | awk '{ print $1 }') GB -> $_new GB"
   docker-machine stop "$MACHINE" >>"$LOG" 2>&1 || true
-  _i=0; while [ -n "$(vmx_pid)" ] && [ "$_i" -lt 120 ]; do sleep 1; _i=$(( _i + 1 )); done
+  _i=0; while [ -n "$(vm_pid)" ] && [ "$_i" -lt 120 ]; do sleep 1; _i=$(( _i + 1 )); done
   _rc=0
-  if [ -n "$(vmx_pid)" ]; then
+  if [ -n "$(vm_pid)" ]; then
     log "enlarge-disk: the VM didn't stop; its disk was not touched"; _rc=1
-  elif ! "$VDISKMANAGER" -x "${_new}GB" "$MACHDIR/$MACHINE/$MACHINE.vmdk" >>"$LOG" 2>&1; then
-    log "enlarge-disk: vmware-vdiskmanager failed; the disk is unchanged"; _rc=1
+  elif ! vm_grow_disk "$_new" >>"$LOG" 2>&1; then
+    log "enlarge-disk: growing the VM's disk failed; it is unchanged"; _rc=1
   fi
   machine_start >>"$LOG" 2>&1 || true   # always bring the VM back up
   if [ "$(machine_status)" = Running ]; then
@@ -624,7 +547,7 @@ overview_status() { # [--full]
   echo "version $OVERVIEW_VERSION"
   echo "state $_w"
   [ -z "$_disk" ] || echo "disk $_disk"
-  _v=$(vmx_pid); echo "vmx-pid ${_v:-0}"
+  _v=$(vm_pid); echo "vmx-pid ${_v:-0}"   # the menu's wire word
   if launchctl list "$AGENT_LABEL" >/dev/null 2>&1; then echo "login on"; else echo "login off"; fi
   [ "${1:-}" != --full ] || echo "image $(image_status)"
 }
@@ -773,12 +696,10 @@ repoint_iso_url() {
 # or the single word "unknown" when no source has a complete valid pair. Exit 0 always.
 # Read-only: never writes VMX, never starts/stops/creates the VM, never changes context.
 resource_status() {
-  _rs_vmx="$MACHDIR/$MACHINE/$MACHINE.vmx"
-  _rs_mem=$(sed -n 's/^memsize *= *"\([0-9]*\)".*/\1/p' "$_rs_vmx" 2>/dev/null | head -1)
-  _rs_cpu=$(sed -n 's/^numvcpus *= *"\([0-9]*\)".*/\1/p' "$_rs_vmx" 2>/dev/null | head -1)
+  _rs_sz=$(vm_size); _rs_mem=${_rs_sz% *}; _rs_cpu=${_rs_sz#* }
   if [ -n "$_rs_mem" ] && [ "$_rs_mem" -gt 0 ] 2>/dev/null \
   && [ -n "$_rs_cpu" ] && [ "$_rs_cpu" -gt 0 ] 2>/dev/null; then
-    printf 'memory_mib=%s\nvcpus=%s\nsource=vmx\n' "$_rs_mem" "$_rs_cpu"
+    printf 'memory_mib=%s\nvcpus=%s\nsource=%s\n' "$_rs_mem" "$_rs_cpu" "$(vm_size_source)"
     return
   fi
   _rs_mem=$(docker-machine inspect "$MACHINE" --format '{{.Driver.Memory}}' 2>/dev/null)

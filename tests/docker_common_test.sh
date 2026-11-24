@@ -4,6 +4,7 @@
 set -eu
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 COMMON="$ROOT/payload/docker-machine-common.sh"
+export MAVERICKS_DOCKER_COMMON="$COMMON"   # common finds vm-provider-fusion.sh beside it
 [ -f "$COMMON" ] || { echo "docker_common_test: common missing" >&2; exit 1; }
 fail() { echo "docker_common_test: FAIL: $*" >&2; exit 1; }
 
@@ -316,64 +317,64 @@ case_resource_status() {
 
 # Suspend stays allowed and goes hard, and hot-add is on (2026-11-24 spikes): a soft suspend leaves
 # boot2docker unreachable; suspend.disabled stops VMware hot-adding memory; mem/vcpu.hotadd let ctl
-# resize grow the VM live. prepare_vmx converts a STOPPED, not suspended, VM's .vmx (Fusion reads it
+# resize grow the VM live. vm_prepare converts a STOPPED, not suspended, VM's .vmx (Fusion reads it
 # only at power-on, and may rewrite it while running).
 _ready_vmx_lines() { grep -c -e '^powerType\.suspend = "hard"$' -e '^mem\.hotadd = "TRUE"$' -e '^vcpu\.hotadd = "TRUE"$' "$1"; }
-case_prepare_vmx() {
+case_vm_prepare() {
   setup
   export MAVERICKS_DOCKER_MACHDIR="$WORK/machines"; mkdir -p "$MAVERICKS_DOCKER_MACHDIR/container-tools"
   _x="$MAVERICKS_DOCKER_MACHDIR/container-tools/container-tools.vmx"
   printf '#!/bin/sh\nexit 1\n' > "$BIN/pgrep"; chmod +x "$BIN/pgrep"   # no vmx running
-  ( . "$COMMON"; prepare_vmx ) || fail "prepare_vmx with no .vmx must succeed quietly"
+  ( . "$COMMON"; vm_prepare ) || fail "vm_prepare with no .vmx must succeed quietly"
   # A VM from our earlier releases or Wowfunhappy's docker-machine: suspend off, soft suspend, no vcpu hot-add.
   printf 'memsize = "1024"\nmem.hotadd = "TRUE"\npowerType.suspend = "soft"\nnumvcpus = "1"\nsuspend.disabled = "TRUE"\nvcpu.hotadd = "FALSE"\n' > "$_x"
-  ( . "$COMMON"; prepare_vmx; prepare_vmx )
+  ( . "$COMMON"; vm_prepare; vm_prepare )
   grep -q '^suspend\.disabled' "$_x" && fail "suspend.disabled = TRUE must go: the VM can't hot-add memory without suspend (got: $(cat "$_x"))"
   [ "$(grep -c '^powerType\.suspend' "$_x")" = 1 ] && grep -q '^powerType\.suspend = "hard"$' "$_x" \
     || fail "a soft suspend runs the guest's network script, which leaves the VM unreachable; it must be hard (got: $(cat "$_x"))"
   [ "$(grep -c '^mem\.hotadd' "$_x")" = 1 ] && [ "$(grep -c '^vcpu\.hotadd' "$_x")" = 1 ] && [ "$(_ready_vmx_lines "$_x")" = 3 ] \
     || fail "exactly one mem.hotadd and one vcpu.hotadd, both TRUE (got: $(cat "$_x"))"
   grep -q '^numvcpus = "1"$' "$_x" && grep -q '^memsize = "1024"$' "$_x" || fail "the rest of the .vmx must be kept"
-  cp "$_x" "$WORK/ready"; ( . "$COMMON"; prepare_vmx ); cmp -s "$_x" "$WORK/ready" || fail "a ready .vmx must be left byte-identical"
+  cp "$_x" "$WORK/ready"; ( . "$COMMON"; vm_prepare ); cmp -s "$_x" "$WORK/ready" || fail "a ready .vmx must be left byte-identical"
   printf 'memsize = "1024"' > "$_x"   # none of the lines, and no final newline
-  ( . "$COMMON"; prepare_vmx )
+  ( . "$COMMON"; vm_prepare )
   grep -q '^memsize = "1024"$' "$_x" && [ "$(_ready_vmx_lines "$_x")" = 3 ] || fail "the lines must go on their own lines (got: $(cat "$_x"))"
   printf 'powerType.suspend = "soft"\ncheckpoint.vmState = "container-tools-1.vmss"\n' > "$_x"
-  ( . "$COMMON"; prepare_vmx )
+  ( . "$COMMON"; vm_prepare )
   grep -q '"soft"' "$_x" || fail "a suspended VM's .vmx must not be edited under its suspend file"
   printf 'powerType.suspend = "soft"\ncheckpoint.vmState = ""\n' > "$_x"
-  ( . "$COMMON"; prepare_vmx )
+  ( . "$COMMON"; vm_prepare )
   grep -q '^powerType\.suspend = "hard"$' "$_x" || fail "an empty checkpoint.vmState is a VM that resumed, not a suspended one"
   printf 'powerType.suspend = "soft"\n' > "$_x"
   printf '#!/bin/sh\necho 4242\n' > "$BIN/pgrep"; chmod +x "$BIN/pgrep"   # the VM is running
-  ( . "$COMMON"; prepare_vmx )
+  ( . "$COMMON"; vm_prepare )
   grep -q '"soft"' "$_x" || fail "a running VM's .vmx must not be edited"
   teardown
 }
-case_vmx_allows_hotadd() {
+case_vm_live_resize_ready() {
   setup
   export MAVERICKS_DOCKER_MACHDIR="$WORK/machines"; mkdir -p "$MAVERICKS_DOCKER_MACHDIR/container-tools"
   _x="$MAVERICKS_DOCKER_MACHDIR/container-tools/container-tools.vmx"
   _ok='powerType.suspend = "hard"\nmem.hotadd = "TRUE"\nvcpu.hotadd = "TRUE"\n'
-  printf "$_ok" > "$_x"; ( . "$COMMON"; vmx_allows_hotadd ) || fail "a prepared .vmx allows hot-add"
+  printf "$_ok" > "$_x"; ( . "$COMMON"; vm_live_resize_ready ) || fail "a prepared .vmx allows hot-add"
   for _bad in 'powerType.suspend = "hard"\nmem.hotadd = "TRUE"\n' 'powerType.suspend = "hard"\nvcpu.hotadd = "TRUE"\n' \
               'mem.hotadd = "TRUE"\nvcpu.hotadd = "TRUE"\npowerType.suspend = "soft"\n' "${_ok}suspend.disabled = \"TRUE\"\n"; do
-    printf "$_bad" > "$_x"; ( . "$COMMON"; vmx_allows_hotadd ) && fail "not ready for hot-add: $(cat "$_x")"
+    printf "$_bad" > "$_x"; ( . "$COMMON"; vm_live_resize_ready ) && fail "not ready for hot-add: $(cat "$_x")"
   done
-  rm -f "$_x"; ( . "$COMMON"; vmx_allows_hotadd ) && fail "no .vmx, no hot-add"
+  rm -f "$_x"; ( . "$COMMON"; vm_live_resize_ready ) && fail "no .vmx, no hot-add"
   teardown
 }
 
 _payload_scripts() { for _f in "$ROOT"/payload/*; do case "$_f" in *.md|*.plist) ;; *) printf '%s\n' "$_f" ;; esac; done; }
-# Every start goes through machine_start, so no start path can skip prepare_vmx.
+# Every start goes through machine_start, so no start path can skip vm_prepare.
 case_starts_go_through_machine_start() {
   _direct=$(_payload_scripts | xargs grep -Hn 'docker-machine start' | grep -v '^[^:]*:[0-9]*: *#' | grep -v 'machine_start()' | grep -v 'Verify:' || true)
   [ -z "$_direct" ] || fail "start the VM with machine_start, not docker-machine start directly: $_direct"
 }
 
 case_status_word
-case_prepare_vmx
-case_vmx_allows_hotadd
+case_vm_prepare
+case_vm_live_resize_ready
 case_starts_go_through_machine_start
 case_creating
 case_announce
