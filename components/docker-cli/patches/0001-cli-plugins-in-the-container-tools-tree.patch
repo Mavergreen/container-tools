@@ -1,12 +1,40 @@
 diff --git a/cli-plugins/manager/manager_unix.go b/cli-plugins/manager/manager_unix.go
-index f546dc3..ed3ff4b 100644
 --- a/cli-plugins/manager/manager_unix.go
 +++ b/cli-plugins/manager/manager_unix.go
-@@ -13,6 +13,7 @@
+@@ -2,6 +2,11 @@
+ 
+ package manager
+ 
++import (
++	"os"
++	"path/filepath"
++)
++
+ // defaultSystemPluginDirs are the platform-specific locations to search
+ // for plugins in order of preference.
+ //
+@@ -12,9 +17,23 @@
+ // 3. Platform-specific defaultSystemPluginDirs (as defined below).
  //
  // [ConfigFile.CLIPluginsExtraDirs]: https://pkg.go.dev/github.com/docker/cli@v26.1.4+incompatible/cli/config/configfile#ConfigFile.CLIPluginsExtraDirs
- var defaultSystemPluginDirs = []string{
-+	"/usr/local/mavergreen/container-tools/lib/docker/cli-plugins",
+-var defaultSystemPluginDirs = []string{
++var defaultSystemPluginDirs = append(treePluginDirs(),
  	"/usr/local/lib/docker/cli-plugins",
  	"/usr/local/libexec/docker/cli-plugins",
  	"/usr/lib/docker/cli-plugins",
+ 	"/usr/libexec/docker/cli-plugins",
++)
++
++// treePluginDirs is Container Tools for Mavericks' tree: it ships docker-compose at
++// ../lib/docker/cli-plugins from this executable, and the tree may be anywhere (the .pkg's install,
++// or wherever the standalone archive is unpacked), so it is found from the executable, links resolved.
++func treePluginDirs() []string {
++	exe, err := os.Executable()
++	if err != nil {
++		return nil
++	}
++	if real, err := filepath.EvalSymlinks(exe); err == nil {
++		exe = real
++	}
++	return []string{filepath.Join(filepath.Dir(exe), "..", "lib", "docker", "cli-plugins")}
+ }

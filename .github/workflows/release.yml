@@ -399,6 +399,8 @@ jobs:
           PKG="dist/container-tools-$VER.pkg"
 
           sh cmake/package_pkg.sh --out "$PKG" --version "$VER" \
+            --standalone-out "dist/container-tools-$VER-macos-x86_64.tar.gz" \
+            --readme payload/README-standalone.md \
             --docker in/docker --compose in/docker-compose --machine in/docker-machine \
             --lazydocker in/lazydocker --iso iso/boot2docker.iso \
             --updater-app in/container-tools-updater.app \
@@ -460,6 +462,7 @@ jobs:
           name: docker-pkg
           path: |
             dist/*.pkg
+            dist/*-macos-*.tar.gz
             dist/container-tools.xml
             dist/RELEASE_NOTES.md
             dist/build-info-*.txt

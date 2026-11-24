@@ -346,9 +346,10 @@ case_harden_suspend() {
   teardown
 }
 
+_payload_scripts() { for _f in "$ROOT"/payload/*; do case "$_f" in *.md|*.plist) ;; *) printf '%s\n' "$_f" ;; esac; done; }
 # Every start goes through machine_start, so no start path can skip harden_suspend.
 case_starts_go_through_machine_start() {
-  _direct=$(grep -n 'docker-machine start' "$ROOT"/payload/* | grep -v '^[^:]*:[0-9]*: *#' | grep -v 'machine_start()' | grep -v 'Verify:' || true)
+  _direct=$(_payload_scripts | xargs grep -Hn 'docker-machine start' | grep -v '^[^:]*:[0-9]*: *#' | grep -v 'machine_start()' | grep -v 'Verify:' || true)
   [ -z "$_direct" ] || fail "start the VM with machine_start, not docker-machine start directly: $_direct"
 }
 

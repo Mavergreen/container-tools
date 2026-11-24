@@ -1,26 +1,30 @@
 #!/bin/sh
 # platform: host-agnostic -- shipyard's packaging seams run through stevedore on Linux or a Mac (the release packages on ubuntu-latest)
-# Assemble the (unsigned) container-tools product .pkg: the docker CLI + Compose + Machine binaries,
-# the boot2docker.iso, and the Sparkle updater (app + shim + daily LaunchAgent), with a hard 10.9.5
-# install floor. Signing + appcast happen separately (shared sign_and_appcast.sh) in the release
+# Assemble the standalone archive and, derived from it, the (unsigned) container-tools product .pkg:
+# the docker CLI + Compose + Machine + lazydocker, the VM scripts, the menu-bar app and the
+# boot2docker.iso; the .pkg adds the login LaunchAgent and the Sparkle updater (app + shim + daily
+# LaunchAgent), with a hard 10.9.5 install floor. Archive first (shipyard SKILL.md "Standalone
+# archive"): the archive is the product's tree and app, and the .pkg is derived from it. Signing + appcast happen separately (shared sign_and_appcast.sh) in the release
 # workflow; this script only builds the .pkg.
 #
 # Product-specific payload layout lives HERE; the generic mechanics (updater staging, the OS-floor
 # product archive) come from mavericks-shipyard via $SHIPYARD_SCRIPTS. Prints the .pkg path on stdout.
 #
 # Usage:
-#   package_pkg.sh --out PKG --version V --docker BIN --compose BIN --machine BIN --iso ISO \
+#   package_pkg.sh --out PKG --standalone-out container-tools-V-macos-x86_64.tar.gz --version V --docker BIN --compose BIN --machine BIN --iso ISO \
 #     --updater-app APP.app --bootstrap BIN --common FILE --ctl BIN --migrate BIN --menubar-app APP.app \
 #     --launch-agent PLIST [--msc-scripts DIR] [--resources DIR --welcome FILE]
 set -eu
 export COPYFILE_DISABLE=1
 
-OUT=""; VER=""; DOCKER=""; COMPOSE=""; MACHINE=""; LAZY=""; ISO=""; UPD_APP=""; DOCKED=""; SYNC=""
+OUT=""; ARCHIVE=""; VER=""; DOCKER=""; COMPOSE=""; MACHINE=""; LAZY=""; ISO=""; UPD_APP=""; DOCKED=""; SYNC=""
 BOOT=""; COMMON=""; CTL=""; MIGRATE=""; GETFUSION=""; MENUBAR=""; LAUNCHAGENT=""
-SHIPYARD=""; RES=""; WELCOME=""
+SHIPYARD=""; RES=""; WELCOME=""; README_SA=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --out) OUT="$2"; shift 2;;
+    --standalone-out) ARCHIVE="$2"; shift 2;;
+    --readme) README_SA="$2"; shift 2;;
     --version) VER="$2"; shift 2;;
     --docker) DOCKER="$2"; shift 2;;
     --compose) COMPOSE="$2"; shift 2;;
@@ -43,19 +47,19 @@ while [ $# -gt 0 ]; do
     *) echo "package_pkg: unknown arg: $1" >&2; exit 2;;
   esac
 done
-[ -n "$OUT" ] && [ -n "$VER" ] && [ -n "$DOCKER" ] && [ -n "$COMPOSE" ] && [ -n "$MACHINE" ] \
+[ -n "$OUT" ] && [ -n "$ARCHIVE" ] && [ -n "$README_SA" ] && [ -n "$VER" ] && [ -n "$DOCKER" ] && [ -n "$COMPOSE" ] && [ -n "$MACHINE" ] \
   && [ -n "$LAZY" ] && [ -n "$ISO" ] && [ -n "$UPD_APP" ] && [ -n "$DOCKED" ] && [ -n "$SYNC" ] \
   && [ -n "$BOOT" ] && [ -n "$COMMON" ] && [ -n "$CTL" ] && [ -n "$MIGRATE" ] && [ -n "$GETFUSION" ] && [ -n "$MENUBAR" ] && [ -n "$LAUNCHAGENT" ] \
-  || { echo "package_pkg: need --out --version --docker --compose --machine --lazydocker --iso --updater-app --docked --sync-helper --bootstrap --common --ctl --migrate --get-fusion --menubar-app --launch-agent" >&2; exit 2; }
+  || { echo "package_pkg: need --out --standalone-out --readme --version --docker --compose --machine --lazydocker --iso --updater-app --docked --sync-helper --bootstrap --common --ctl --migrate --get-fusion --menubar-app --launch-agent" >&2; exit 2; }
 if [ -z "$SHIPYARD" ]; then
   # --msc-scripts wins when given; otherwise msc.sh takes $SHIPYARD_SCRIPTS (install@v1 exports it in
   # CI) or asks shipyard-cmake where find_package(MavericksShipyard) lands, and exits if neither works.
   . "$(dirname "$0")/../msc.sh"
 fi
-for f in "$DOCKER" "$COMPOSE" "$MACHINE" "$LAZY" "$ISO" "$DOCKED" "$SYNC" "$BOOT" "$COMMON" "$CTL" "$MIGRATE" "$GETFUSION" "$LAUNCHAGENT"; do [ -f "$f" ] || { echo "package_pkg: missing input: $f" >&2; exit 1; }; done
+for f in "$DOCKER" "$COMPOSE" "$MACHINE" "$LAZY" "$ISO" "$DOCKED" "$SYNC" "$BOOT" "$COMMON" "$CTL" "$MIGRATE" "$GETFUSION" "$LAUNCHAGENT" "$README_SA"; do [ -f "$f" ] || { echo "package_pkg: missing input: $f" >&2; exit 1; }; done
 [ -d "$UPD_APP" ] || { echo "package_pkg: no updater .app: $UPD_APP" >&2; exit 1; }
 [ -d "$MENUBAR" ] || { echo "package_pkg: no menubar .app: $MENUBAR" >&2; exit 1; }
-for h in stage_product.sh set_install_floor.sh build_component_pkg.sh assert_pkg_installs_in_place.sh \
+for h in stage_standalone.sh stage_pkg_from_archive.sh stage_product.sh set_install_floor.sh build_component_pkg.sh assert_pkg_installs_in_place.sh \
          postinstall-stop-gui.sh assert_gui_relaunch_safe.sh; do
   [ -f "$SHIPYARD/$h" ] || { echo "package_pkg: shared helper missing: $SHIPYARD/$h" >&2; exit 1; }
 done
@@ -66,8 +70,11 @@ WORK=$(mktemp -d "${TMPDIR:-/tmp}/container-tools-pkg.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 stage="$WORK/stage"; scripts="$WORK/scripts"; comp="$WORK/component.pkg"
 
-# --- product payload (docker CLI + plugins + iso) ---
-T="$stage/usr/local/mavergreen/container-tools"
+REPO=$(cd "$(dirname "$0")/.." && pwd)
+
+# --- the product's tree and app, in a root holding nothing else: the standalone archive's content ---
+sroot="$WORK/standalone-root"
+T="$sroot/usr/local/mavergreen/container-tools"
 mkdir -p "$T/bin" "$T/libexec" "$T/lib/docker/cli-plugins" "$T/share"
 install -m 0755 "$DOCKER"  "$T/bin/docker"
 install -m 0755 "$MACHINE" "$T/bin/docker-machine"
@@ -82,8 +89,17 @@ install -m 0644 "$COMMON"  "$T/libexec/docker-machine-common.sh"
 install -m 0755 "$COMPOSE" "$T/lib/docker/cli-plugins/docker-compose"
 ln -s ../lib/docker/cli-plugins/docker-compose "$T/bin/docker-compose"
 install -m 0644 "$ISO"     "$T/share/boot2docker.iso"
-mkdir -p "$stage/Applications"
-cp -R "$MENUBAR" "$stage/Applications/Mavericks Container Tools.app"
+mkdir -p "$T/share/doc/container-tools"
+install -m 0644 "$README_SA" "$T/share/doc/container-tools/README.md"
+mkdir -p "$sroot/Applications"
+cp -R "$MENUBAR" "$sroot/Applications/Mavericks Container Tools.app"
+find "$sroot" -name '._*' -delete 2>/dev/null || true
+
+# --- the archive, then the pkg's root derived from it (judged by check-standalone-archive.sh) ---
+mkdir -p "$(dirname "$ARCHIVE")"
+sh "$SHIPYARD/stage_standalone.sh" "$sroot" container-tools "$VER" x86_64 "$ARCHIVE" >&2
+sh "$SHIPYARD/stage_pkg_from_archive.sh" --repo "$REPO" "$ARCHIVE" \
+  "$REPO/packaging/container-tools.standalone-bundled" "$stage" >&2
 
 # VM auto-start: a per-user LaunchAgent (ships ENABLED) driving the bootstrap helper. Auto-starts at
 # login (the postinstall also `load`s it now); a user turns it off via the menu's "Start Docker at

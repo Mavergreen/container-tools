@@ -1,15 +1,20 @@
 #!/bin/sh
 # platform: host-agnostic
+# docker finds docker-compose in its own tree's lib/docker/cli-plugins, wherever the tree is: the
+# .pkg's install or an unpacked standalone archive. So the family patch adds a directory found from
+# the docker executable itself (links resolved), never a fixed /usr/local/mavergreen path.
 set -eu
 R="$(cd "$(dirname "$0")/.." && pwd)"
 fail() { echo "FAIL: $1"; exit 1; }
 P="$R/components/docker-cli/patches/0001-cli-plugins-in-the-container-tools-tree.patch"
-dir=/usr/local/mavergreen/container-tools/lib/docker/cli-plugins
-[ -f "$P" ] || fail "docker needs the family patch that adds $dir to its plugin search list (D2)"
-grep -q "^+[[:space:]]*\"$dir\",\$" "$P" || fail "the patch must add $dir to defaultSystemPluginDirs"
-grep -q 'T="$stage/usr/local/mavergreen/container-tools"' "$R/cmake/package_pkg.sh" \
-  || fail "package_pkg.sh must stage the tree the patched docker searches"
-grep -q 'install -m 0755 "$COMPOSE" "$T/lib/docker/cli-plugins/docker-compose"' "$R/cmake/package_pkg.sh" \
-  || fail "the compose plugin must be staged in the tree's lib/docker/cli-plugins, the directory the patch adds"
+[ -f "$P" ] || fail "docker needs the family patch that adds its tree's plugin directory to its search list"
+grep -q '^+.*os\.Executable()' "$P" && grep -q '^+.*filepath\.EvalSymlinks' "$P" \
+  || fail "the patch must locate the tree from the docker executable, through links"
+grep -q '^+.*filepath\.Join(filepath\.Dir(exe), "\.\.", "lib", "docker", "cli-plugins")' "$P" \
+  || fail "the patch must add <tree>/lib/docker/cli-plugins (../lib/docker/cli-plugins from bin/docker)"
+! grep -q '^+.*/usr/local/mavergreen' "$P" || fail "the patch must not name /usr/local/mavergreen (the archive is relocatable)"
+grep -q 'install -m 0755 "$DOCKER"  "$T/bin/docker"' "$R/cmake/package_pkg.sh" \
+  && grep -q 'install -m 0755 "$COMPOSE" "$T/lib/docker/cli-plugins/docker-compose"' "$R/cmake/package_pkg.sh" \
+  || fail "package_pkg.sh must stage docker in bin/ and compose in lib/docker/cli-plugins of the same tree"
 grep -q 'components/docker-cli/patches' "$R/cmake/build_docker_cli.sh" || fail "build_docker_cli.sh must apply the docker-cli patches"
 echo "PASS: docker_plugin_dir_test"

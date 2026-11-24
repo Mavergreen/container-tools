@@ -308,7 +308,7 @@ static BOOL isChanging(NSString *s) {
 - (void)doGetFusion:(id)s {
   [self notifyTitle:@"Container Tools" text:@"Opening the VMware Fusion download (467 MB) in your browser…"];
   NSTask *t = [[NSTask alloc] init];
-  t.launchPath = @"/usr/local/mavergreen/container-tools/bin/container-tools-get-fusion";
+  t.launchPath = MDToolPath(@"container-tools-get-fusion");
   @try { [t launch]; }
   @catch (NSException *e) { NSLog(@"Container Tools: could not run get-fusion: %@", e); }
 }

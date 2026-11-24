@@ -6,7 +6,12 @@
 set -u
 
 SELF=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
-. "${MAVERICKS_DOCKER_COMMON:-/usr/local/mavergreen/container-tools/libexec/docker-machine-common.sh}"
+# The tree this script belongs to, found from the script's own location (through a link such as
+# the one the .pkg puts in its shared bin/), so the same script runs from the .pkg's install and
+# from wherever the standalone archive is unpacked.
+_s=$0; while [ -L "$_s" ]; do _l=$(readlink "$_s"); case "$_l" in /*) _s=$_l ;; *) _s=$(dirname "$_s")/$_l ;; esac; done
+CT_HOME=$(cd "$(dirname "$_s")/.." && pwd -P)
+. "${MAVERICKS_DOCKER_COMMON:-$CT_HOME/libexec/docker-machine-common.sh}"
 
 # Advisory-only: fires once/day after a fresh VM creation when the VM reports fewer
 # resources than the tested GUI baseline (2 GiB RAM, two vCPUs). Unknown status
