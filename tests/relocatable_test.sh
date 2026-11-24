@@ -28,7 +28,8 @@ mkdir -p "$T/home/.docker/machine/machines/container-tools"
 cp "$ct/share/boot2docker.iso" "$T/home/.docker/machine/machines/container-tools/boot2docker.iso"
 printf '#!/bin/sh\nexit 0\n' > "$T/stub/notifyutil"; chmod +x "$T/stub/notifyutil"
 
-out=$(cd / && env -u MAVERICKS_DOCKER_COMMON -u MAVERICKS_DOCKER_ISO -u MAVERICKS_DOCKER_BINDIR -u MAVERICKS_DOCKER_MACHDIR \
+# unset, not env -u: 10.9's /usr/bin/env has no -u.
+out=$(cd / && unset MAVERICKS_DOCKER_COMMON MAVERICKS_DOCKER_ISO MAVERICKS_DOCKER_BINDIR MAVERICKS_DOCKER_MACHDIR && env \
   HOME="$T/home" MAVERICKS_DOCKER_FUSION_PRESENT=1 MAVERICKS_DOCKER_LOG="$T/log" MAVERICKS_DOCKER_STATE_DIR="$T/state" \
   PATH="$T/stub:/usr/bin:/bin" "$T/links/docker-machine-ctl" image-status 2>"$T/err") \
   || fail "ctl through a symlink to a relocated tree failed: $(cat "$T/err")"
