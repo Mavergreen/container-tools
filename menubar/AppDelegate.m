@@ -118,6 +118,8 @@ static BOOL isChanging(NSString *s) {
   if (isUp(state) || [state isEqualToString:@"stopped"]) {
     NSMenuItem *disk = [m addItemWithTitle:[self diskLineForState:(isUp(state) ? @"running" : state)] action:NULL keyEquivalent:@""];
     disk.enabled = NO;
+    NSString *held = [self heldResizeLine];
+    if (held) { NSMenuItem *h = [m addItemWithTitle:held action:NULL keyEquivalent:@""]; h.enabled = NO; }
   }
   [m addItem:[NSMenuItem separatorItem]];
 
@@ -157,6 +159,10 @@ static BOOL isChanging(NSString *s) {
   [m addItemWithTitle:@"Check for Updates…" action:@selector(checkForUpdates:) keyEquivalent:@""];
 
   [m addItem:[NSMenuItem separatorItem]];
+  if (self.overview.autosize) {   // an older ctl says nothing about self-sizing: no item
+    NSMenuItem *sz = [m addItemWithTitle:@"Size Automatically" action:@selector(toggleAutosize:) keyEquivalent:@""];
+    sz.state = [self.overview.autosize isEqualToString:@"on"] ? NSOnState : NSOffState;
+  }
   NSMenuItem *vmLogin = [m addItemWithTitle:@"Start Docker at Login"
                                      action:@selector(toggleVMLogin:) keyEquivalent:@""];
   vmLogin.state = [self.overview.login isEqualToString:@"on"] ? NSOnState : NSOffState;
@@ -349,6 +355,21 @@ static BOOL isChanging(NSString *s) {
   } @catch (NSException *e) {
     NSLog(@"Container Tools: could not launch updater: %@", e);
   }
+}
+
+// Self-sizing (2026-11-24): the VM grows and shrinks by itself; off pins its size.
+- (void)toggleAutosize:(id)s {
+  BOOL on = [self.overview.autosize isEqualToString:@"on"];
+  [self.controller runArgs:@[@"autosize", (on ? @"off" : @"on")] completion:^(NSString *o, int c) { [self requestOverview]; }];
+}
+// "Resizes to 6 GB, 1 CPU when idle" for a resize self-sizing holds for a restart; nil when none.
+- (NSString *)heldResizeLine {
+  NSArray *p = [self.overview.autosizePending componentsSeparatedByString:@" "];
+  if (p.count != 2) return nil;
+  double gb = [p[0] doubleValue] / 1024.0;
+  NSInteger cpus = [p[1] integerValue];
+  NSString *g = (gb == floor(gb)) ? [NSString stringWithFormat:@"%.0f", gb] : [NSString stringWithFormat:@"%.1f", gb];
+  return [NSString stringWithFormat:@"Resizes to %@ GB, %ld CPU%@ when idle", g, (long)cpus, cpus == 1 ? @"" : @"s"];
 }
 
 - (void)toggleVMLogin:(id)s {

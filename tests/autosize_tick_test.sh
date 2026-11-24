@@ -247,6 +247,11 @@ case_failed_user_resize_doesnt_pin() {
   [ -e "$ST/autosize-off" ] && fail "a refused resize changes nothing, so it doesn't pin"
   teardown
 }
+case_overview_decides_first() {
+  setup; rm -f "$ST/autosize-decided"; set_vmx 16384 6
+  ctl overview-status; grep -qx 'autosize off' "$WORK/ctl-out" || fail "before any tick, an enlarged VM already reads off ($(cat "$WORK/ctl-out"))"
+  teardown
+}
 case_overview_lines() {
   setup; : > "$ST/autosize-decided"; echo "6144 1" > "$ST/autosize-pending"
   ctl overview-status; grep -qx 'autosize on' "$WORK/ctl-out" && grep -qx 'autosize-pending 6144 1' "$WORK/ctl-out" \
@@ -278,4 +283,5 @@ case_autosize_verbs
 case_user_resize_pins_and_clears_pending
 case_failed_user_resize_doesnt_pin
 case_overview_lines
+case_overview_decides_first
 echo "autosize_tick_test: OK"

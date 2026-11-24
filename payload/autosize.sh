@@ -133,6 +133,7 @@ autosize_verb() { # on|off|status
   esac
 }
 autosize_overview() { # the menu's lines
+  autosize_first_decision   # the menu may ask before the login agent's first tick has decided
   if autosize_on; then echo "autosize on"; else echo "autosize off"; fi
   if read -r _pm _pc 2>/dev/null < "$AUTOSIZE_PENDING"; then echo "autosize-pending $_pm $_pc"; fi
   return 0

@@ -43,9 +43,12 @@ static const int64_t kFetchTimeout = 30;   // a full overview on a loaded 10.9 b
 }
 
 - (void)runVerb:(NSString *)verb completion:(void (^)(NSString *, int))completion {
+  [self runArgs:@[verb] completion:completion];
+}
+- (void)runArgs:(NSArray *)args completion:(void (^)(NSString *, int))completion {
   dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
     int code = 0;
-    NSString *out = [self runArgsSync:@[verb] out:&code];
+    NSString *out = [self runArgsSync:args out:&code];
     dispatch_async(dispatch_get_main_queue(), ^{ if (completion) completion(out, code); });
   });
 }

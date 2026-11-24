@@ -8,6 +8,8 @@
 @property (readonly, copy) NSString *login;   // on | off
 @property (readonly, copy) NSString *image;   // current | stale | absent | nil (not asked yet)
 @property (readonly) pid_t vmxPid;            // 0 when none
+@property (readonly, copy) NSString *autosize;         // on | off | nil (an older ctl)
+@property (readonly, copy) NSString *autosizePending;  // "MB CPUS" | nil: none held (cleared by any autosize line)
 // nil unless the first line is "version 1".
 + (instancetype)overviewFromOutput:(NSString *)out previous:(MDOverview *)prev;
 @end

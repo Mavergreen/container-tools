@@ -91,6 +91,13 @@ grep -q 'runVerb:@"reclaimable"' "$AD" || fail "Free Up Space must confirm with 
 grep -q 'runAndRefresh:@"free-space"' "$AD" || fail "Free Up Space must drive the free-space verb"
 grep -q 'not touched' "$AD" || fail "the Free Up Space confirmation must say containers and volumes are not touched"
 
+# Self-sizing (2026-11-24): one checkmark item drives `docker-machine-ctl autosize on|off`, its state
+# from the overview's `autosize` line; a held resize shows as a passive line.
+grep -q '"Size Automatically"' "$AD" || fail "menu must offer 'Size Automatically'"
+grep -q '@"autosize", (on ? @"off" : @"on")' "$AD" || fail "'Size Automatically' must run ctl autosize on|off"
+grep -q 'isEqualToString:@"autosize"' "$ROOT/menubar/MDOverview.m" || fail "the overview must parse the autosize line"
+grep -q 'isEqualToString:@"autosize-pending"' "$ROOT/menubar/MDOverview.m" || fail "the overview must parse autosize-pending"
+grep -q 'when idle' "$AD" || fail "a held resize shows as 'Resizes to … when idle'"
 echo "docker_menubar_test: OK"
 
 # Live state (2026-11-23): the shell posts a Darwin notification on every change and the app asks
