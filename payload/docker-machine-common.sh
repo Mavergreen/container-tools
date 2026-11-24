@@ -143,6 +143,22 @@ op_end() { # release the lock and tell the menu, which asks for the settled stat
 
 vmx_pid() { pgrep -f "machines/$MACHINE/.*\.vmx" 2>/dev/null | head -1 || true; }
 
+# Suspend stays off for our VM. Every VM that ran in production had suspend.disabled = "TRUE"
+# (Wowfunhappy's patched docker-machine wrote it, and migrate kept it); stock docker-machine 0.16.2
+# doesn't, so components/docker-machine/patches/0002 now writes it at create, and this adds it to a
+# VM created before that. Only while stopped: Fusion reads the .vmx at power-on and may rewrite it
+# while running. An explicit setting, either value, is left alone.
+disable_suspend() {
+  _ds_vmx="$MACHDIR/$MACHINE/$MACHINE.vmx"
+  [ -f "$_ds_vmx" ] && [ -z "$(vmx_pid)" ] || return 0
+  grep -q '^suspend\.disabled *=' "$_ds_vmx" && return 0
+  [ -z "$(tail -c 1 "$_ds_vmx")" ] || echo >> "$_ds_vmx"
+  echo 'suspend.disabled = "TRUE"' >> "$_ds_vmx"
+  log "disabled suspend in $_ds_vmx"
+}
+# Every start of the VM goes through here (docker_common_test holds the payload to it).
+machine_start() { disable_suspend; docker-machine start "$MACHINE"; }
+
 # VMware pauses the VM when the Mac's disk fills, and asks a noSpace (guest RAM's .vmem) or
 # outofspace (the virtual disk) question in vmware.log once a second until it can carry on. Meanwhile
 # docker-machine's status flaps and every docker-machine command waits, so this is the one thing
@@ -341,7 +357,7 @@ enlarge_disk() { # [new GB]
   elif ! "$VDISKMANAGER" -x "${_new}GB" "$MACHDIR/$MACHINE/$MACHINE.vmdk" >>"$LOG" 2>&1; then
     log "enlarge-disk: vmware-vdiskmanager failed; the disk is unchanged"; _rc=1
   fi
-  docker-machine start "$MACHINE" >>"$LOG" 2>&1 || true   # always bring the VM back up
+  machine_start >>"$LOG" 2>&1 || true   # always bring the VM back up
   if [ "$(machine_status)" = Running ]; then
     sync_context
     if [ "$_rc" -eq 0 ] && ! docker-machine ssh "$MACHINE" \
@@ -500,7 +516,7 @@ ensure_ready() { # secs
 repair() {
   op_try_begin repair || { echo "Another Docker operation is running; try again when it finishes."; return 1; }
   clear_user_stopped
-  [ "$(machine_status)" = Running ] || docker-machine start "$MACHINE" >>"$LOG" 2>&1 || true
+  [ "$(machine_status)" = Running ] || machine_start >>"$LOG" 2>&1 || true
   sync_context
   if [ "$(api_state 10)" = needs-attention ]; then
     log "repair: $(tr '\n' ' ' < "$API_ERR_FILE" 2>/dev/null); regenerating $MACHINE's certificates"

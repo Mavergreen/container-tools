@@ -153,7 +153,7 @@ main() {
       announce
       exit 0
     fi
-    if docker-machine start "$MACHINE" >>"$LOG" 2>&1; then clear_boot_refused; fi
+    if machine_start >>"$LOG" 2>&1; then clear_boot_refused; fi
   fi
   [ "$(machine_status)" = "Running" ] && { clear_boot_refused; sync_context; }
   _disk=$(disk_refresh)

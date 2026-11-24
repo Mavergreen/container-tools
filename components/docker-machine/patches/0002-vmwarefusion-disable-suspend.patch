@@ -1,0 +1,16 @@
+Subject: vmwarefusion: create the VM with suspend disabled
+
+Every Container Tools VM that has run in production had suspend.disabled = "TRUE": it came from
+Wowfunhappy's patched docker-machine (his recipe: "disables suspend in vmware because that screws
+up stuff"), and docker-machine-migrate kept it. Stock 0.16.2 doesn't write it, so a VM our .pkg
+created ran in an untested configuration. Write it at create, as his did (2026-11-24); payload's
+disable_suspend adds it to a VM created before this.
+
+--- a/drivers/vmwarefusion/vmx_darwin.go
++++ b/drivers/vmwarefusion/vmx_darwin.go
+@@ -69,4 +69,5 @@
+ numvcpus = "{{.CPU}}"
+ hgfs.mapRootShare = "FALSE"
+ hgfs.linkRootShare = "FALSE"
++suspend.disabled = "TRUE"
+ `

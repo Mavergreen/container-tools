@@ -314,7 +314,42 @@ case_resource_status() {
   teardown
 }
 
+# Suspend stays off for our VM (2026-11-24): every VM that ever ran in production had
+# suspend.disabled = "TRUE" (inherited from Wowfunhappy's docker-machine), while one our .pkg created
+# didn't. disable_suspend adds it to a STOPPED VM's .vmx (Fusion reads the .vmx only at power-on, and
+# may rewrite it while running), once, and leaves an explicit setting of either value alone.
+case_disable_suspend() {
+  setup
+  export MAVERICKS_DOCKER_MACHDIR="$WORK/machines"; mkdir -p "$MAVERICKS_DOCKER_MACHDIR/container-tools"
+  _x="$MAVERICKS_DOCKER_MACHDIR/container-tools/container-tools.vmx"
+  printf '#!/bin/sh\nexit 1\n' > "$BIN/pgrep"; chmod +x "$BIN/pgrep"   # no vmx running
+  ( . "$COMMON"; disable_suspend ) || fail "disable_suspend with no .vmx must succeed quietly"
+  printf 'memsize = "1024"\nnumvcpus = "1"\n' > "$_x"
+  ( . "$COMMON"; disable_suspend; disable_suspend )
+  [ "$(grep -c '^suspend\.disabled = "TRUE"$' "$_x")" = 1 ] || fail "a stopped VM's .vmx must gain suspend.disabled = TRUE exactly once (got: $(cat "$_x"))"
+  grep -q '^numvcpus = "1"$' "$_x" || fail "the rest of the .vmx must be kept"
+  printf 'memsize = "1024"\nsuspend.disabled = "FALSE"\n' > "$_x"
+  ( . "$COMMON"; disable_suspend )
+  [ "$(grep -c '^suspend\.disabled' "$_x")" = 1 ] && grep -q '"FALSE"' "$_x" || fail "an explicit suspend.disabled setting must be left alone"
+  printf 'memsize = "1024"' > "$_x"   # no final newline
+  ( . "$COMMON"; disable_suspend )
+  grep -q '^memsize = "1024"$' "$_x" && grep -q '^suspend\.disabled = "TRUE"$' "$_x" || fail "the line must go on its own line (got: $(cat "$_x"))"
+  printf 'memsize = "1024"\n' > "$_x"
+  printf '#!/bin/sh\necho 4242\n' > "$BIN/pgrep"; chmod +x "$BIN/pgrep"   # the VM is running
+  ( . "$COMMON"; disable_suspend )
+  grep -q suspend "$_x" && fail "a running VM's .vmx must not be edited"
+  teardown
+}
+
+# Every start goes through machine_start, so no start path can skip disable_suspend.
+case_starts_go_through_machine_start() {
+  _direct=$(grep -n 'docker-machine start' "$ROOT"/payload/* | grep -v '^[^:]*:[0-9]*: *#' | grep -v 'machine_start()' | grep -v 'Verify:' || true)
+  [ -z "$_direct" ] || fail "start the VM with machine_start, not docker-machine start directly: $_direct"
+}
+
 case_status_word
+case_disable_suspend
+case_starts_go_through_machine_start
 case_creating
 case_announce
 case_bindir_on_path

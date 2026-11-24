@@ -6,7 +6,7 @@ set -u
 . "${MAVERICKS_DOCKER_COMMON:-/usr/local/mavergreen/container-tools/libexec/docker-machine-common.sh}"
 
 _run_and_announce() { # docker-machine subcommand
-  docker-machine "$1" "$MACHINE" >>"$LOG" 2>&1
+  if [ "$1" = start ]; then machine_start; else docker-machine "$1" "$MACHINE"; fi >>"$LOG" 2>&1
   _rc=$?
   # A start/restart can bring the VM up on a new DHCP IP; re-point the context so the menu path
   # self-heals too (not only the login-agent timer). Only once the VM is actually up.
@@ -42,7 +42,7 @@ case "${1:-}" in
     _refuse_without_room image-upgrade
     repoint_iso_url
     if docker-machine upgrade "$MACHINE" >>"$LOG" 2>&1; then _rc=0; else _rc=$?; fi
-    docker-machine start "$MACHINE" >>"$LOG" 2>&1 || true   # always bring the VM back up
+    machine_start >>"$LOG" 2>&1 || true   # always bring the VM back up
     [ "$(machine_status)" = Running ] && sync_context
     op_end
     exit $_rc ;;
