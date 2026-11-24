@@ -111,4 +111,12 @@ grep -q 'removeAllItems' "$AD" || fail "an open menu updates in place (rebuild i
 grep -q 'then start Docker' "$AD" || fail "a start refused for room offers Start once space is freed"
 grep -q 'parseFailed' "$AD" || fail "an overview that doesn't parse must not keep the 2 s cadence forever"
 grep -q 'applyOverview' "$M/MDWatchers.m" && fail "stale comment: MDWatchers names applyOverview:"
+# The app runs from the standalone archive too, as <tree>/<Name>.app beside <tree>/bin: it finds its
+# tools beside itself first, and the .pkg's install location only as the fallback, named once.
+MC="$ROOT/menubar/MDController.m"
+grep -q 'NSString \*MDToolPath(NSString \*name)' "$MC" || fail "MDController must define MDToolPath(name)"
+grep -q 'stringByDeletingLastPathComponent' "$MC" || fail "MDToolPath must look beside the app bundle first"
+[ "$(cat "$ROOT"/menubar/*.m | grep -c '/usr/local/mavergreen')" = 1 ] || fail "the install prefix must appear once, as MDToolPath's fallback"
+grep -q 'MDToolPath(@"docker-machine-ctl")' "$MC" || fail "ctl must be found through MDToolPath"
+grep -q 'MDToolPath(@"container-tools-get-fusion")' "$ROOT/menubar/AppDelegate.m" || fail "get-fusion must be found through MDToolPath"
 echo "docker_menubar_test: live-state OK"

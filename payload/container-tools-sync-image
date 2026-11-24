@@ -16,7 +16,12 @@
 # from a reliable context instead: the always-running menu-bar app's "Update VM Image", or the CLI
 # `docker-machine-ctl image-upgrade`. Both share the same detection/repoint helpers used here.
 set -u
-. "${MAVERICKS_DOCKER_COMMON:-/usr/local/mavergreen/container-tools/libexec/docker-machine-common.sh}"
+# The tree this script belongs to, found from the script's own location (through a link such as
+# the one the .pkg puts in its shared bin/), so the same script runs from the .pkg's install and
+# from wherever the standalone archive is unpacked.
+_s=$0; while [ -L "$_s" ]; do _l=$(readlink "$_s"); case "$_l" in /*) _s=$_l ;; *) _s=$(dirname "$_s")/$_l ;; esac; done
+CT_HOME=$(cd "$(dirname "$_s")/.." && pwd -P)
+. "${MAVERICKS_DOCKER_COMMON:-$CT_HOME/libexec/docker-machine-common.sh}"
 
 command -v docker-machine >/dev/null 2>&1 || exit 0
 [ "$(image_status)" = stale ] || exit 0   # VM absent, or already on the installed image

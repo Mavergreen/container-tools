@@ -9,17 +9,17 @@
 # status_word() -> "absent" while the VM is really Stopped, and start/stop no-op. Guarantee
 # our bindir is reachable regardless of the caller's PATH. Appended (not prepended) so a
 # test/caller stub earlier on PATH still wins. Found dogfooding, 2026-07-29.
-BINDIR=${MAVERICKS_DOCKER_BINDIR:-/usr/local/mavergreen/container-tools/bin}
-case ":$PATH:" in
-  *:"$BINDIR":*) ;;
-  *) PATH="$PATH:$BINDIR"; export PATH ;;
-esac
+# CT_HOME is the tree, set by the script that sources this from its own location.
+BINDIR=${MAVERICKS_DOCKER_BINDIR:-${CT_HOME:+$CT_HOME/bin}}
+if [ -n "$BINDIR" ]; then
+  case ":$PATH:" in *:"$BINDIR":*) ;; *) PATH="$PATH:$BINDIR"; export PATH ;; esac
+fi
 
 # Private test seams: a scratch VM (with its own DOCKER_CONFIG, so `docker context use` can't move
 # the user's) proves VM-level verbs like enlarge-disk without touching the user's VM or context.
 MACHINE=${MAVERICKS_DOCKER_MACHINE:-container-tools}
 CONTEXT=${MAVERICKS_DOCKER_CONTEXT:-mavericks}
-ISO=${MAVERICKS_DOCKER_ISO:-/usr/local/mavergreen/container-tools/share/boot2docker.iso}
+ISO=${MAVERICKS_DOCKER_ISO:-${CT_HOME:+$CT_HOME/share/boot2docker.iso}}
 LOG=${MAVERICKS_DOCKER_LOG:-$HOME/Library/Logs/Mavergreen/container-tools/bootstrap.log}
 STATE_DIR=${MAVERICKS_DOCKER_STATE_DIR:-$HOME/Library/Application Support/Mavergreen/container-tools}
 LOCK="$STATE_DIR/creating.lock"
