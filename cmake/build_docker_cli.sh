@@ -22,7 +22,11 @@ rm -f ._go.mod ._go.sum   # NFS AppleDouble sidecars make the pinned clone look 
 COMMIT=$(git rev-parse --short HEAD)
 unset CC
 export CGO_ENABLED=1 GOARCH=amd64 GOTOOLCHAIN=local
-"$GO" build -mod=vendor \
+# Reproducible across hosts: -trimpath keeps host paths out of what Go stamps, and the prefix maps
+# keep them out of cgo's C debug info (both spellings of the work dir; CGO_CFLAGS replaces Go's
+# default -O2 -g, so that stays).
+export CGO_CFLAGS="-O2 -g -ffile-prefix-map=$PWD=/src -ffile-prefix-map=$(pwd -P)=/src"
+"$GO" build -trimpath -mod=vendor \
   -ldflags "-linkmode=external \
             -X github.com/docker/cli/cli/version.Version=$VER \
             -X github.com/docker/cli/cli/version.GitCommit=$COMMIT \
