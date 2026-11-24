@@ -24,6 +24,7 @@ setup() {
   export MAVERICKS_DOCKER_RESIZE_WAIT=3
   export MAVERICKS_DOCKER_NOW=1000000
   ST="$MAVERICKS_DOCKER_STATE_DIR"
+  : > "$ST/autosize-decided"   # the first-run decision is made (cases that test it remove this)
   VMX="$MAVERICKS_DOCKER_MACHDIR/container-tools/container-tools.vmx"; mkdir -p "$(dirname "$VMX")"
   printf 'memsize = "1024"\nnumvcpus = "1"\npowerType.suspend = "hard"\nmem.hotadd = "TRUE"\nvcpu.hotadd = "TRUE"\n' > "$VMX"
   boot_log 1024
@@ -200,6 +201,61 @@ case_user_stopped_not_started() {
   teardown
 }
 
+CTL="$ROOT/payload/docker-machine-ctl"
+ctl() { sh "$CTL" "$@" > "$WORK/ctl-out" 2>&1; }
+# Existing VMs (maintainer's decision): on if at the default size, off if someone enlarged it; once.
+case_first_decision_default_size_on() {
+  setup; rm -f "$ST/autosize-decided"; tick
+  [ -e "$ST/autosize-decided" ] || fail "the first tick decides"
+  [ -e "$ST/autosize-off" ] && fail "a VM at 1024/1 self-sizes"
+  [ "$(ssh_calls)" -ge 1 ] || fail "and samples on that tick"
+  teardown
+}
+case_first_decision_enlarged_off() {
+  setup; rm -f "$ST/autosize-decided"; set_vmx 16384 6; tick
+  [ -e "$ST/autosize-off" ] || fail "an enlarged VM keeps its size: self-sizing off"
+  [ "$(ssh_calls)" = 0 ] || fail "and nothing is sampled"
+  teardown
+}
+case_first_decision_once() {
+  setup; rm -f "$ST/autosize-decided"; tick; set_vmx 16384 6; tick
+  [ -e "$ST/autosize-off" ] && fail "the decision is made once, not again when the size changes"
+  teardown
+}
+case_autosize_verbs() {
+  setup; : > "$ST/autosize-decided"; echo "2048 1" > "$ST/autosize-pending"
+  ctl autosize status; grep -qx on "$WORK/ctl-out" && grep -q 'pending 2048 1' "$WORK/ctl-out" || fail "status says on and what's held ($(cat "$WORK/ctl-out"))"
+  ctl autosize off; [ -e "$ST/autosize-off" ] && [ ! -e "$ST/autosize-pending" ] || fail "off pins and drops what's held"
+  ctl autosize status; grep -qx off "$WORK/ctl-out" || fail "status says off"
+  ctl autosize on; [ ! -e "$ST/autosize-off" ] || fail "on turns it back on"
+  ctl autosize bogus && fail "a bad word is refused"
+  teardown
+}
+case_user_resize_pins_and_clears_pending() {
+  setup; : > "$ST/autosize-decided"; echo "6144 1" > "$ST/autosize-pending"
+  ctl resize --memory 2048 || fail "the user's resize works ($(cat "$WORK/ctl-out"))"
+  [ -e "$ST/autosize-off" ] || fail "the user's resize pins the size"
+  [ -e "$ST/autosize-pending" ] && fail "and drops what self-sizing held"
+  grep -q 'autosize on' "$WORK/ctl-out" || fail "and says how to turn self-sizing back on ($(cat "$WORK/ctl-out"))"
+  : > "$G/calls"; sample 9 0 962560 700000 0.10; tick
+  [ "$(ssh_calls)" = 0 ] || fail "the next tick leaves a pinned VM alone"
+  teardown
+}
+case_failed_user_resize_doesnt_pin() {
+  setup; : > "$ST/autosize-decided"
+  ctl resize --memory 999 && fail "999 isn't a multiple of 4"
+  [ -e "$ST/autosize-off" ] && fail "a refused resize changes nothing, so it doesn't pin"
+  teardown
+}
+case_overview_lines() {
+  setup; : > "$ST/autosize-decided"; echo "6144 1" > "$ST/autosize-pending"
+  ctl overview-status; grep -qx 'autosize on' "$WORK/ctl-out" && grep -qx 'autosize-pending 6144 1' "$WORK/ctl-out" \
+    || fail "the overview says on and what's held ($(cat "$WORK/ctl-out"))"
+  : > "$ST/autosize-off"; rm -f "$ST/autosize-pending"; ctl overview-status
+  grep -qx 'autosize off' "$WORK/ctl-out" && ! grep -q autosize-pending "$WORK/ctl-out" || fail "and off ($(cat "$WORK/ctl-out"))"
+  teardown
+}
+
 case_off_does_nothing
 case_op_in_progress_does_nothing
 case_paused_for_disk_does_nothing
@@ -215,4 +271,11 @@ case_ceiling_notifies_once_a_day
 case_failed_sample_no_change
 case_pending_applied_at_next_start
 case_user_stopped_not_started
+case_first_decision_default_size_on
+case_first_decision_enlarged_off
+case_first_decision_once
+case_autosize_verbs
+case_user_resize_pins_and_clears_pending
+case_failed_user_resize_doesnt_pin
+case_overview_lines
 echo "autosize_tick_test: OK"

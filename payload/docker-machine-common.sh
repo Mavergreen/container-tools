@@ -555,6 +555,7 @@ overview_status() { # [--full]
   [ -z "$_disk" ] || echo "disk $_disk"
   _v=$(vm_pid); echo "vmx-pid ${_v:-0}"   # the menu's wire word
   if launchctl list "$AGENT_LABEL" >/dev/null 2>&1; then echo "login on"; else echo "login off"; fi
+  autosize_overview
   [ "${1:-}" != --full ] || echo "image $(image_status)"
 }
 readiness_state() { # [secs]

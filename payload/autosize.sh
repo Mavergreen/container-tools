@@ -105,7 +105,38 @@ autosize_decide() {
 AUTOSIZE_STATE="${STATE_DIR:-}/autosize-state"
 AUTOSIZE_OFF="${STATE_DIR:-}/autosize-off"           # pinned: the user sized it, or turned self-sizing off
 AUTOSIZE_PENDING="${STATE_DIR:-}/autosize-pending"   # "MB CPUS": a restart change, held until nothing runs
+AUTOSIZE_DECIDED="${STATE_DIR:-}/autosize-decided"   # the first-run on/off decision was made
 autosize_on() { [ ! -e "$AUTOSIZE_OFF" ]; }
+# Existing VMs (maintainer's decision, 2026-11-24): one still at the default size self-sizes; one
+# someone enlarged keeps its size, pinned, until they turn self-sizing on. Decided once.
+autosize_first_decision() {
+  [ -e "$AUTOSIZE_DECIDED" ] && return 0
+  _fd=$(vm_size); _fm=${_fd% *}; _fc=${_fd#* }
+  _as_int "$_fm" && _as_int "$_fc" || return 0   # no VM yet: decide when there is one
+  mkdir -p "$STATE_DIR" 2>/dev/null || true
+  if [ "$_fm" -gt "$AUTOSIZE_MIN_MB" ] || [ "$_fc" -gt 1 ]; then
+    : > "$AUTOSIZE_OFF"; log "autosize: off for this VM, which someone sized at $_fm MB, $_fc CPUs (docker-machine-ctl autosize on)"
+  else
+    log "autosize: on for this VM ($_fm MB, $_fc CPUs)"
+  fi
+  : > "$AUTOSIZE_DECIDED"
+}
+# The user sized the VM themselves: self-sizing leaves it there until they turn it back on.
+autosize_pin() { mkdir -p "$STATE_DIR" 2>/dev/null || true; : > "$AUTOSIZE_OFF"; : > "$AUTOSIZE_DECIDED"; rm -f "$AUTOSIZE_PENDING"; }
+autosize_verb() { # on|off|status
+  case "${1:-}" in
+    on)  mkdir -p "$STATE_DIR" 2>/dev/null || true; rm -f "$AUTOSIZE_OFF"; : > "$AUTOSIZE_DECIDED"; echo on ;;
+    off) autosize_pin; echo off ;;
+    status) if autosize_on; then echo on; else echo off; fi
+            if read -r _pm _pc 2>/dev/null < "$AUTOSIZE_PENDING"; then echo "pending $_pm $_pc"; fi ;;
+    *) echo "usage: docker-machine-ctl autosize on|off|status" >&2; return 2 ;;
+  esac
+}
+autosize_overview() { # the menu's lines
+  if autosize_on; then echo "autosize on"; else echo "autosize off"; fi
+  if read -r _pm _pc 2>/dev/null < "$AUTOSIZE_PENDING"; then echo "autosize-pending $_pm $_pc"; fi
+  return 0
+}
 _as_now() { echo "${MAVERICKS_DOCKER_NOW:-$(date +%s)}"; }
 
 # One ssh: the guest's counters as S_* assignments (KEY VALUE lines); nothing when it can't be read.
@@ -132,7 +163,7 @@ _as_gb() { awk -v m="$1" 'BEGIN { g = m / 1024; if (g == int(g)) printf "%d", g;
 # Nothing runs in Docker: docker answered, and listed no container.
 _as_idle() { _ps=$(docker --context "$CONTEXT" ps -q 2>/dev/null) && [ -z "$_ps" ]; }
 _as_apply_pending() { # the VM's state allows it; resize by restart to the held size
-  read -r _pm _pc < "$AUTOSIZE_PENDING" 2>/dev/null || return 1
+  read -r _pm _pc 2>/dev/null < "$AUTOSIZE_PENDING" || return 1
   log "autosize: applying the held change to $_pm MB, $_pc CPUs"
   if resize_vm --memory "$_pm" --cpus "$_pc" --restart >>"$LOG" 2>&1; then rm -f "$AUTOSIZE_PENDING"; return 0; fi
   log "autosize: the held change didn't apply"; return 1
@@ -141,6 +172,7 @@ _as_apply_pending() { # the VM's state allows it; resize by restart to the held 
 autosize_apply_pending() { autosize_on && [ -f "$AUTOSIZE_PENDING" ] && _as_apply_pending; }
 
 autosize_tick() {
+  autosize_first_decision
   autosize_on || return 0
   op_in_progress && return 0
   host_disk_full && return 0
@@ -161,7 +193,7 @@ SAMPLE
   mkdir -p "$STATE_DIR" 2>/dev/null || true
   _d=$(autosize_decide "$AUTOSIZE_STATE")
   # A held change the facts have overtaken: a grow the VM already reached, a shrink under pressure.
-  if read -r _pm _pc < "$AUTOSIZE_PENDING" 2>/dev/null; then
+  if read -r _pm _pc 2>/dev/null < "$AUTOSIZE_PENDING"; then
     if [ "$_pm" -le "$CUR_MB" ] && [ "$_pc" -le "$CUR_CPUS" ]; then
       log "autosize: dropped the held $_pm MB, $_pc CPUs: the VM is already that size or more"; rm -f "$AUTOSIZE_PENDING"
     elif { [ "$_pm" -lt "$CUR_MB" ] || [ "$_pc" -lt "$CUR_CPUS" ]; } && {

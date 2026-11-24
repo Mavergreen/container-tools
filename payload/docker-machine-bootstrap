@@ -13,23 +13,6 @@ _s=$0; while [ -L "$_s" ]; do _l=$(readlink "$_s"); case "$_l" in /*) _s=$_l ;; 
 CT_HOME=$(cd "$(dirname "$_s")/.." && pwd -P)
 . "${MAVERICKS_DOCKER_COMMON:-$CT_HOME/libexec/docker-machine-common.sh}"
 
-# Advisory-only: fires once/day after a fresh VM creation when the VM reports fewer
-# resources than the tested GUI baseline (2 GiB RAM, two vCPUs). Unknown status
-# (no VMX, no driver JSON) produces no advice. Read-only: no VM changes.
-advise_gui_resources() {
-  _rs=$(resource_status)
-  case "$_rs" in
-    unknown) return 0 ;;
-  esac
-  _ag_mem=$(printf '%s\n' "$_rs" | sed -n 's/^memory_mib=\([0-9]*\)$/\1/p')
-  _ag_cpu=$(printf '%s\n' "$_rs" | sed -n 's/^vcpus=\([0-9]*\)$/\1/p')
-  [ -n "$_ag_mem" ] && [ -n "$_ag_cpu" ] || return 0
-  if [ "$_ag_mem" -lt 2048 ] || [ "$_ag_cpu" -lt 2 ]; then
-    notify gui-resources "Container Tools for Mavericks" \
-      "This VM was created with fewer resources than the tested GUI baseline (2 GiB RAM, two vCPUs). For GUI apps, 4 GiB offers headroom: docker-machine-ctl resize --memory 4096 --cpus 2 --restart"
-  fi
-}
-
 create_machine() {
   mkdir -p "$STATE_DIR" 2>/dev/null || true
   # Atomic acquire. Returns 1 if another run holds the lock (TOCTOU-safe vs the
@@ -40,7 +23,6 @@ create_machine() {
     eval "docker-machine create $(vm_create_args) \"\$MACHINE\"" >>"$LOG" 2>&1
     _create_exit=$?
     rmdir "$LOCK" 2>/dev/null || true
-    [ "$_create_exit" -eq 0 ] && advise_gui_resources
   else
     notify create "Container Tools for Mavericks" "Creating the Docker VM (one-time, ~1-2 min)..."
     _cmd="docker-machine create $(vm_create_args) $MACHINE && rmdir '$LOCK' && env MAVERICKS_DOCKER_JUST_CREATED=1 '$SELF'"
@@ -107,11 +89,6 @@ main() {
     exit 0
   fi
   _status=$(machine_status)
-  # Interactive re-exec after a successful create carries MAVERICKS_DOCKER_JUST_CREATED=1;
-  # advise here so the interactive path gets the same resource nudge as the noninteractive one.
-  if [ "${MAVERICKS_DOCKER_JUST_CREATED:-}" = 1 ] && [ -n "$_status" ]; then
-    advise_gui_resources
-  fi
   if [ -z "$_status" ]; then
     if legacy_default_exists; then
       # A Wowfunhappy-era 'default' VM exists and container-tools does not. Carry the data by

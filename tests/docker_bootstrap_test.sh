@@ -690,8 +690,8 @@ case_legacy_default_running_defers
 
 # --- Task 4: GUI resource advisory after a successful fresh create ---
 
-# Case: fresh create with 1024 MiB / 1 vCPU -> once/day gui-resources advisory fires.
-# The 2 GiB/two-vCPU baseline matches Task 2's check_gui_resources() threshold.
+# Case: a fresh 1024 MiB / 1 vCPU VM gets NO "make it 2 GiB" advisory: self-sizing grows it when it
+# needs more (design, 2026-11-24). The other gui-resources cases below stay as guards that it never fires.
 case_fresh_create_gui_advisory() {
   setup; make_docker
   mkdir -p "$MAVERICKS_DOCKER_MACHDIR/container-tools"
@@ -711,8 +711,7 @@ esac
 EOF
   chmod +x "$BIN/docker-machine"
   sh "$BOOT" || fail "fresh-create advisory path should exit 0"
-  grep -q '2 GiB' "$OSA_LOG" || fail "expected gui-resources advisory mentioning 2 GiB after fresh create with 1024 MiB/1 vCPU"
-  grep -q 'docker-machine-ctl resize --memory 4096 --cpus 2' "$OSA_LOG" || fail "the advisory says how to resize: $(cat "$OSA_LOG")"
+  grep -q 'GUI baseline' "$OSA_LOG" && fail "no gui-resources advisory: self-sizing replaces it ($(cat "$OSA_LOG"))"
   teardown
 }
 
@@ -830,8 +829,8 @@ esac
 EOF
   chmod +x "$BIN/docker-machine"
   MAVERICKS_DOCKER_JUST_CREATED=1 sh "$BOOT" || fail "re-exec with marker should exit 0"
-  grep -q '2 GiB' "$OSA_LOG" \
-    || fail "expected gui-resources advisory when JUST_CREATED marker is set and VM has 1024 MiB/1 vCPU"
+  grep -q 'GUI baseline' "$OSA_LOG" \
+    && fail "no gui-resources advisory after a create either: self-sizing replaces it"
   teardown
 }
 
