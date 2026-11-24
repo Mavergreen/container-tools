@@ -158,9 +158,10 @@ main() {
       announce
       exit 0
     fi
-    if machine_start >>"$LOG" 2>&1; then clear_boot_refused; fi
+    # A size change self-sizing held for a restart applies now, as the VM starts.
+    if autosize_apply_pending || machine_start >>"$LOG" 2>&1; then clear_boot_refused; fi
   fi
-  [ "$(machine_status)" = "Running" ] && { clear_boot_refused; sync_context; }
+  [ "$(machine_status)" = "Running" ] && { clear_boot_refused; sync_context; autosize_tick; }
   _disk=$(disk_refresh)
   case "$_disk" in
     *" low") if auto_free_due; then auto_free_space || true; _disk=$(disk_refresh); fi ;;
