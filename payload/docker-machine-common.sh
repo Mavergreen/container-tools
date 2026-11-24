@@ -143,29 +143,38 @@ op_end() { # release the lock and tell the menu, which asks for the settled stat
 
 vmx_pid() { pgrep -f "machines/$MACHINE/.*\.vmx" 2>/dev/null | head -1 || true; }
 
-# Suspend stays allowed, and hard. A soft suspend runs the guest's VMware Tools network script,
-# which on boot2docker flushes every interface's address and can't restore it, so the VM resumes
-# unreachable; that is why Wowfunhappy's docker-machine wrote suspend.disabled = "TRUE", and why
-# every VM through 20261025.17 had it. A hard suspend skips the guest scripts and resumes intact
-# (spike, 2026-11-24), and suspend must stay allowed because VMware hot-adds memory and CPUs by a
-# suspend-and-resume. components/docker-machine/patches/0002 creates VMs this way; this converts one
-# created before it. Only while stopped and not suspended: Fusion reads the .vmx at power-on and may
-# rewrite it while running, and a suspended VM resumes against the .vmx it was suspended with.
-harden_suspend() {
-  _hs_vmx="$MACHDIR/$MACHINE/$MACHINE.vmx"
-  [ -f "$_hs_vmx" ] && [ -z "$(vmx_pid)" ] || return 0
-  grep -q '^checkpoint\.vmState *= *"[^"]' "$_hs_vmx" && return 0
-  if grep -q '^powerType\.suspend *= *"hard"' "$_hs_vmx" && ! grep -q '^suspend\.disabled *= *"TRUE"' "$_hs_vmx"; then
-    return 0
-  fi
-  _hs_tmp="$_hs_vmx.ct-tmp"
-  { awk '!/^suspend\.disabled *= *"TRUE"/ && !/^powerType\.suspend *=/' "$_hs_vmx"
-    echo 'powerType.suspend = "hard"'; } > "$_hs_tmp" && cat "$_hs_tmp" > "$_hs_vmx"   # keeps its mode
-  rm -f "$_hs_tmp"
-  log "allowed hard suspend in $_hs_vmx"
+# Suspend stays allowed, and hard; hot-add is on. A soft suspend runs the guest's VMware Tools network
+# script, which on boot2docker flushes every interface's address and can't restore it, so the VM
+# resumes unreachable; that is why Wowfunhappy's docker-machine wrote suspend.disabled = "TRUE", and
+# why every VM through 20261025.17 had it. A hard suspend skips the guest scripts and resumes intact
+# (spike, 2026-11-24). Suspend must stay allowed, and mem/vcpu.hotadd on, because VMware hot-adds
+# memory and CPUs (ctl resize, growing live) by a suspend-and-resume. components/docker-machine/
+# patches/0002 and 0003 create VMs this way; this converts one created before them. Only while
+# stopped and not suspended: Fusion reads the .vmx at power-on and may rewrite it while running, and a
+# suspended VM resumes against the .vmx it was suspended with.
+_VMX_READY='powerType.suspend = "hard"
+mem.hotadd = "TRUE"
+vcpu.hotadd = "TRUE"'
+vmx_allows_hotadd() {
+  _ah_vmx="$MACHDIR/$MACHINE/$MACHINE.vmx"
+  [ -f "$_ah_vmx" ] || return 1
+  grep -q '^suspend\.disabled *= *"TRUE"' "$_ah_vmx" && return 1
+  grep -q '^powerType\.suspend *= *"hard"' "$_ah_vmx" && grep -q '^mem\.hotadd *= *"TRUE"' "$_ah_vmx" \
+    && grep -q '^vcpu\.hotadd *= *"TRUE"' "$_ah_vmx"
+}
+prepare_vmx() {
+  _pv_vmx="$MACHDIR/$MACHINE/$MACHINE.vmx"
+  [ -f "$_pv_vmx" ] && [ -z "$(vmx_pid)" ] || return 0
+  grep -q '^checkpoint\.vmState *= *"[^"]' "$_pv_vmx" && return 0
+  vmx_allows_hotadd && return 0
+  _pv_tmp="$_pv_vmx.ct-tmp"
+  { awk '!/^suspend\.disabled *= *"TRUE"/ && !/^powerType\.suspend *=/ && !/^mem\.hotadd *=/ && !/^vcpu\.hotadd *=/' "$_pv_vmx"
+    printf '%s\n' "$_VMX_READY"; } > "$_pv_tmp" && cat "$_pv_tmp" > "$_pv_vmx"   # cat keeps its mode
+  rm -f "$_pv_tmp"
+  log "prepared $_pv_vmx for hard suspend and hot-add"
 }
 # Every start of the VM goes through here (docker_common_test holds the payload to it).
-machine_start() { harden_suspend; docker-machine start "$MACHINE"; }
+machine_start() { prepare_vmx; docker-machine start "$MACHINE"; }
 
 # VMware pauses the VM when the Mac's disk fills, and asks a noSpace (guest RAM's .vmem) or
 # outofspace (the virtual disk) question in vmware.log once a second until it can carry on. Meanwhile

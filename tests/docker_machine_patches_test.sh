@@ -36,4 +36,8 @@ _p=$(grep -l '^+powerType\.suspend = "hard"$' "$ROOT"/components/docker-machine/
 grep -q '^-powerType\.suspend = "soft"$' $_p || fail "the patch must replace the template's soft suspend, not add a second line"
 grep -q '^+++ b/drivers/vmwarefusion/vmx_darwin.go' $_p || fail "the suspend patch must target drivers/vmwarefusion/vmx_darwin.go"
 grep -l '^+suspend\.disabled' "$ROOT"/components/docker-machine/patches/*.patch && fail "no patch may disable suspend: hot-add needs it"
+# New VMs allow CPU hot-add (upstream's template already has mem.hotadd), so ctl resize can grow them live.
+_p=$(grep -l '^+vcpu\.hotadd = "TRUE"$' "$ROOT"/components/docker-machine/patches/*.patch || true)
+[ -n "$_p" ] || fail "no patch adds vcpu.hotadd = \"TRUE\" to the vmwarefusion .vmx template"
+grep -q '^+++ b/drivers/vmwarefusion/vmx_darwin.go' $_p || fail "the vcpu.hotadd patch must target drivers/vmwarefusion/vmx_darwin.go"
 echo "docker_machine_patches_test: OK"

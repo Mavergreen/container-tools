@@ -1,0 +1,18 @@
+Subject: vmwarefusion: allow CPU hot-add
+
+docker-machine-ctl resize grows the running VM through VMware's hot-add. Upstream's template already
+allows memory hot-add (mem.hotadd); CPUs need vcpu.hotadd too. Payload's prepare_vmx makes the same
+change to a VM created before this (2026-11-24).
+
+--- a/drivers/vmwarefusion/vmx_darwin.go
++++ b/drivers/vmwarefusion/vmx_darwin.go
+@@ -51,8 +51,9 @@
+ sata0:2.deviceType = "cdrom-image"
+ {{ end }}
+ vmci0.present = "TRUE"
+ mem.hotadd = "TRUE"
++vcpu.hotadd = "TRUE"
+ memsize = "{{.Memory}}"
+ powerType.powerOff = "soft"
+ powerType.powerOn = "soft"
+ powerType.reset = "soft"
