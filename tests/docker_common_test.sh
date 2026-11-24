@@ -314,41 +314,46 @@ case_resource_status() {
   teardown
 }
 
-# Suspend stays off for our VM (2026-11-24): every VM that ever ran in production had
-# suspend.disabled = "TRUE" (inherited from Wowfunhappy's docker-machine), while one our .pkg created
-# didn't. disable_suspend adds it to a STOPPED VM's .vmx (Fusion reads the .vmx only at power-on, and
-# may rewrite it while running), once, and leaves an explicit setting of either value alone.
-case_disable_suspend() {
+# Suspend stays allowed and goes hard (2026-11-24 spike): a soft suspend leaves boot2docker unreachable,
+# and suspend.disabled stops VMware hot-adding memory. harden_suspend converts a STOPPED, not
+# suspended, VM's .vmx (Fusion reads it only at power-on, and may rewrite it while running).
+case_harden_suspend() {
   setup
   export MAVERICKS_DOCKER_MACHDIR="$WORK/machines"; mkdir -p "$MAVERICKS_DOCKER_MACHDIR/container-tools"
   _x="$MAVERICKS_DOCKER_MACHDIR/container-tools/container-tools.vmx"
   printf '#!/bin/sh\nexit 1\n' > "$BIN/pgrep"; chmod +x "$BIN/pgrep"   # no vmx running
-  ( . "$COMMON"; disable_suspend ) || fail "disable_suspend with no .vmx must succeed quietly"
-  printf 'memsize = "1024"\nnumvcpus = "1"\n' > "$_x"
-  ( . "$COMMON"; disable_suspend; disable_suspend )
-  [ "$(grep -c '^suspend\.disabled = "TRUE"$' "$_x")" = 1 ] || fail "a stopped VM's .vmx must gain suspend.disabled = TRUE exactly once (got: $(cat "$_x"))"
-  grep -q '^numvcpus = "1"$' "$_x" || fail "the rest of the .vmx must be kept"
-  printf 'memsize = "1024"\nsuspend.disabled = "FALSE"\n' > "$_x"
-  ( . "$COMMON"; disable_suspend )
-  [ "$(grep -c '^suspend\.disabled' "$_x")" = 1 ] && grep -q '"FALSE"' "$_x" || fail "an explicit suspend.disabled setting must be left alone"
-  printf 'memsize = "1024"' > "$_x"   # no final newline
-  ( . "$COMMON"; disable_suspend )
-  grep -q '^memsize = "1024"$' "$_x" && grep -q '^suspend\.disabled = "TRUE"$' "$_x" || fail "the line must go on its own line (got: $(cat "$_x"))"
-  printf 'memsize = "1024"\n' > "$_x"
+  ( . "$COMMON"; harden_suspend ) || fail "harden_suspend with no .vmx must succeed quietly"
+  # A VM from our earlier releases or Wowfunhappy's docker-machine: suspend off, soft suspend.
+  printf 'memsize = "1024"\npowerType.suspend = "soft"\nnumvcpus = "1"\nsuspend.disabled = "TRUE"\n' > "$_x"
+  ( . "$COMMON"; harden_suspend; harden_suspend )
+  grep -q '^suspend\.disabled' "$_x" && fail "suspend.disabled = TRUE must go: the VM can't hot-add memory without suspend (got: $(cat "$_x"))"
+  [ "$(grep -c '^powerType\.suspend' "$_x")" = 1 ] && grep -q '^powerType\.suspend = "hard"$' "$_x" \
+    || fail "a soft suspend runs the guest's network script, which leaves the VM unreachable; it must be hard (got: $(cat "$_x"))"
+  grep -q '^numvcpus = "1"$' "$_x" && grep -q '^memsize = "1024"$' "$_x" || fail "the rest of the .vmx must be kept"
+  printf 'memsize = "1024"' > "$_x"   # no powerType.suspend line at all, and no final newline
+  ( . "$COMMON"; harden_suspend )
+  grep -q '^memsize = "1024"$' "$_x" && grep -q '^powerType\.suspend = "hard"$' "$_x" || fail "the line must go on its own line (got: $(cat "$_x"))"
+  printf 'powerType.suspend = "soft"\ncheckpoint.vmState = "container-tools-1.vmss"\n' > "$_x"
+  ( . "$COMMON"; harden_suspend )
+  grep -q '"soft"' "$_x" || fail "a suspended VM's .vmx must not be edited under its suspend file"
+  printf 'powerType.suspend = "soft"\ncheckpoint.vmState = ""\n' > "$_x"
+  ( . "$COMMON"; harden_suspend )
+  grep -q '^powerType\.suspend = "hard"$' "$_x" || fail "an empty checkpoint.vmState is a VM that resumed, not a suspended one"
+  printf 'powerType.suspend = "soft"\n' > "$_x"
   printf '#!/bin/sh\necho 4242\n' > "$BIN/pgrep"; chmod +x "$BIN/pgrep"   # the VM is running
-  ( . "$COMMON"; disable_suspend )
-  grep -q suspend "$_x" && fail "a running VM's .vmx must not be edited"
+  ( . "$COMMON"; harden_suspend )
+  grep -q '"soft"' "$_x" || fail "a running VM's .vmx must not be edited"
   teardown
 }
 
-# Every start goes through machine_start, so no start path can skip disable_suspend.
+# Every start goes through machine_start, so no start path can skip harden_suspend.
 case_starts_go_through_machine_start() {
   _direct=$(grep -n 'docker-machine start' "$ROOT"/payload/* | grep -v '^[^:]*:[0-9]*: *#' | grep -v 'machine_start()' | grep -v 'Verify:' || true)
   [ -z "$_direct" ] || fail "start the VM with machine_start, not docker-machine start directly: $_direct"
 }
 
 case_status_word
-case_disable_suspend
+case_harden_suspend
 case_starts_go_through_machine_start
 case_creating
 case_announce

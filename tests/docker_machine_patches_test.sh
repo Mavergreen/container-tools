@@ -27,9 +27,13 @@ APPLY_RC=1 sh "$ROOT/cmake/build_docker_machine.sh" "$T/src" "$T/out" "$T/go" "$
   && fail "a patch that doesn't apply must fail the build"
 grep -q '^go build' "$T/log" && fail "nothing may be built when the overlay doesn't apply"
 
-# New VMs are created with suspend off, as every VM that ran in production was (Wowfunhappy's
-# docker-machine wrote it; stock 0.16.2 doesn't): some patch adds it to the driver's .vmx template.
-_p=$(grep -l '^+suspend\.disabled = "TRUE"$' "$ROOT"/components/docker-machine/patches/*.patch || true)
-[ -n "$_p" ] || fail "no patch adds suspend.disabled = \"TRUE\" to the vmwarefusion .vmx template"
+# New VMs suspend hard: a soft suspend runs the guest's VMware Tools network script, which flushes
+# every interface's address and can't restore it on boot2docker, so the VM resumes unreachable
+# (spike, 2026-11-24). Suspend itself stays allowed: VMware hot-adds memory and CPUs by a
+# suspend-and-resume. Stock 0.16.2's template says soft; some patch must make it hard.
+_p=$(grep -l '^+powerType\.suspend = "hard"$' "$ROOT"/components/docker-machine/patches/*.patch || true)
+[ -n "$_p" ] || fail "no patch makes the vmwarefusion .vmx template suspend hard"
+grep -q '^-powerType\.suspend = "soft"$' $_p || fail "the patch must replace the template's soft suspend, not add a second line"
 grep -q '^+++ b/drivers/vmwarefusion/vmx_darwin.go' $_p || fail "the suspend patch must target drivers/vmwarefusion/vmx_darwin.go"
+grep -l '^+suspend\.disabled' "$ROOT"/components/docker-machine/patches/*.patch && fail "no patch may disable suspend: hot-add needs it"
 echo "docker_machine_patches_test: OK"

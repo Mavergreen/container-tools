@@ -500,13 +500,14 @@ EOF
   [ "$st" = error ] || fail "docker-machine not answering -> error (got: $st)"
   teardown
 }
-case_start_disables_suspend() {
+case_start_hardens_suspend() {
   setup; stub_dm Stopped; stub_launchctl 0
   printf '#!/bin/sh\nexit 1\n' > "$BIN/pgrep"; chmod +x "$BIN/pgrep"
   export MAVERICKS_DOCKER_MACHDIR="$WORK/machines"; _x="$MAVERICKS_DOCKER_MACHDIR/container-tools/container-tools.vmx"
-  mkdir -p "$(dirname "$_x")"; printf 'numvcpus = "1"\n' > "$_x"
+  mkdir -p "$(dirname "$_x")"; printf 'numvcpus = "1"\npowerType.suspend = "soft"\nsuspend.disabled = "TRUE"\n' > "$_x"
   sh "$CTL" start >/dev/null 2>&1 || :
-  grep -q '^suspend\.disabled = "TRUE"$' "$_x" || fail "ctl start must disable suspend on a VM created without it"
+  grep -q '^powerType\.suspend = "hard"$' "$_x" && ! grep -q '^suspend\.disabled' "$_x" \
+    || fail "ctl start must allow suspend and make it hard (got: $(cat "$_x"))"
   teardown
 }
 case_start_clears_boot_refused() {
@@ -926,7 +927,7 @@ case_overview_status
 case_overview_api_hang_is_bounded
 case_overview_dm_hang_is_bounded
 case_start_clears_boot_refused
-case_start_disables_suspend
+case_start_hardens_suspend
 case_no_cache_files
 case_overview_disk_timeout_keeps_last
 case_overview_local_checks_first

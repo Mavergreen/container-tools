@@ -1,0 +1,24 @@
+Subject: vmwarefusion: suspend the VM hard, never soft
+
+A soft suspend runs the guest's VMware Tools network script, which on boot2docker flushes the
+address from eth0, docker0 and every container's interface, and on resume only sets them up again:
+no DHCP, no docker0 address, since boot2docker has none of the network services the script looks
+for. The VM resumes running but unreachable (spike, 2026-11-24). That is what Wowfunhappy's
+suspend.disabled = "TRUE" avoided ("disables suspend in vmware because that screws up stuff").
+
+A hard suspend skips the guest scripts, and the VM resumes with everything intact: same IP, docker0,
+the /Users share, a synced clock and running containers. Suspend itself must stay allowed: VMware
+hot-adds memory and CPUs to a running VM by a suspend-and-resume, and suspend.disabled makes that
+silently do nothing. Payload's harden_suspend makes the same change to a VM created before this.
+
+--- a/drivers/vmwarefusion/vmx_darwin.go
++++ b/drivers/vmwarefusion/vmx_darwin.go
+@@ -56,7 +56,7 @@
+ powerType.powerOff = "soft"
+ powerType.powerOn = "soft"
+ powerType.reset = "soft"
+-powerType.suspend = "soft"
++powerType.suspend = "hard"
+ scsi0.present = "TRUE"
+ scsi0.virtualDev = "pvscsi"
+ scsi0:0.fileName = "{{.MachineName}}.vmdk"
