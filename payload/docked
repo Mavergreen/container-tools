@@ -1,11 +1,46 @@
 #!/bin/sh
-# platform: macOS-only -- runs docker-machine-ctl, which controls launchctl and sources osascript/BSD-stat helpers
-# docked -- run a one-off container with sensible defaults, bringing the Docker VM up first.
-# Convenience wrapper after the design in Wowfunhappy's "Container Tools for Mavericks" DMG:
-#   docked [image] [command...]   ==   docker run with $PWD mounted at /work.
-# Targets the managed `mavericks` docker context explicitly (per-invocation; no global
-# `docker context use`), so it always reaches the managed VM regardless of the user's
-# currently-selected context. Requires the one-time setup (bootstrap) to have created it.
+# platform: host-agnostic -- plain POSIX sh around docker (and docker-machine-ctl when installed)
+# docked -- run one command in a throwaway container, on the files in the current folder:
+#   docked IMAGE [COMMAND...]
+# is exactly
+#   docker run --rm -i [-t] --network host -v "$PWD":/work -w /work IMAGE [COMMAND...]
+# (-t only at a terminal), after making sure Docker is ready. The name and idea come from
+# Wowfunhappy's Docker for Mavericks disk image; the behaviour is the familiar docker run habit.
+#
+# With the managed .pkg, docker-machine-ctl ensure-ready brings the VM up if it's needed (it
+# respects a VM you stopped on purpose, and a Mac too full to boot it) and the managed `mavericks`
+# context is used, whatever context is selected. In the standalone archive there is no ctl: docked
+# uses your own docker environment (`eval "$(docker-machine env ...)"`).
 set -eu
-docker-machine-ctl start >/dev/null 2>&1 || true
-exec docker --context mavericks run --rm --network host --security-opt seccomp=unconfined --expose 8601 -v "$PWD:/work/" -t "$@"
+[ $# -ge 1 ] || { echo "usage: docked IMAGE [COMMAND...]  (docker run with this folder at /work)" >&2; exit 2; }
+
+ctx=""
+if command -v docker-machine-ctl >/dev/null 2>&1; then
+  w=$(docker-machine-ctl ensure-ready 2>/dev/null) && rc=0 || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    case "$w" in
+      stopped)         why="Docker is stopped (you stopped it). Start it from the menu bar, or: docker-machine-ctl start" ;;
+      absent)          why="there's no Docker VM yet. Set it up with: docker-machine-ctl setup" ;;
+      no-fusion)       why="VMware Fusion isn't installed, and the Docker VM runs in it" ;;
+      host-disk-full)  why="this Mac's disk is full, so VMware paused the Docker VM. Free some space" ;;
+      *)               why="Docker isn't ready (${w:-no answer}). For details: docker-machine-ctl diagnostics" ;;
+    esac
+    echo "docked: $why" >&2
+    exit 1
+  fi
+  ctx="--context mavericks"
+fi
+
+# VMware Fusion shares only /Users with the VM, so a folder elsewhere shows up empty in /work.
+here=$(pwd -P)
+shared=${MAVERICKS_DOCKER_SHARED_ROOT:-/Users}
+case "$here/" in
+  "$shared"/*) ;;
+  *) echo "docked: warning: $here is outside $shared, which is all the Docker VM can see; /work will be empty" >&2 ;;
+esac
+
+tty=""
+[ -t 0 ] && [ -t 1 ] && tty="-t"
+# $ctx and $tty are unquoted on purpose: each is empty or whole flags.
+# shellcheck disable=SC2086
+exec docker $ctx run --rm -i $tty --network host -v "$here:/work" -w /work "$@"

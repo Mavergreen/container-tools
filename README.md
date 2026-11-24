@@ -19,7 +19,7 @@ On reboot, the Docker VM and the Container Tools menu will start automatically.
 - `docker compose`
 - `docker-machine`
 - `lazydocker`
-- `docked`
+- `docked`: `docked IMAGE [COMMAND...]` runs one command in a throwaway container on the files in the current folder. It's shorthand for `docker run --rm -it --network host -v "$PWD":/work -w /work IMAGE [COMMAND...]` (`-t` only at a terminal, so piping works), and it makes sure Docker is ready first. The Docker VM can see only folders under `/Users`; elsewhere, `docked` warns that `/work` will be empty.
 
 ## Coming from Mavericks Forever
 
