@@ -581,7 +581,9 @@ image_status() {
 # fetching it. Unconditional and idempotent -- a no-op for a host already on the installed image.
 repoint_iso_url() {
   _cfg="$MACHDIR/$MACHINE/config.json"
-  [ -f "$_cfg" ] && sed -i '' "s|\"Boot2DockerURL\": *\"[^\"]*\"|\"Boot2DockerURL\": \"$ISO\"|" "$_cfg" 2>/dev/null || true
+  # -i.bak, not -i '': the one in-place form BSD sed (10.9's too) and GNU sed both read the same way.
+  { [ -f "$_cfg" ] && sed -i.bak "s|\"Boot2DockerURL\": *\"[^\"]*\"|\"Boot2DockerURL\": \"$ISO\"|" "$_cfg" 2>/dev/null \
+      && rm -f "$_cfg.bak"; } || true
 }
 
 # Read the VM's configured RAM and CPU from the VMX file (memsize/numvcpus) when both are

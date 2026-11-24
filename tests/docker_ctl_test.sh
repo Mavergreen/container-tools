@@ -294,7 +294,7 @@ case_enlarge_disk_refusals() {
   sh "$CTL" enlarge-disk >/dev/null 2>&1 && fail "a snapshot delta disk: refuse"
   grep -q '^stop' "$DM_LOG" && fail "a refused enlarge-disk must not stop the VM (snapshot)"
   teardown
-  setup; stub_enlarge last 0; sed -i '' 's/monolithicSparse/monolithicFlat/' "$(VMDIR)/container-tools.vmdk"
+  setup; stub_enlarge last 0; sed -i.bak 's/monolithicSparse/monolithicFlat/' "$(VMDIR)/container-tools.vmdk"; rm -f "$(VMDIR)/container-tools.vmdk.bak"
   sh "$CTL" enlarge-disk >/dev/null 2>&1 && fail "not one sparse file: refuse"
   teardown
   setup; MAC_AVAIL_KB=10485760 stub_enlarge last 0
