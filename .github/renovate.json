@@ -45,17 +45,6 @@
       "depNameTemplate": "Mavergreen/clang-22",
       "datasourceTemplate": "github-releases",
       "versioningTemplate": "regex:^(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)-mavericks\\.(?<build>\\d+)$"
-    },
-    {
-      "customType": "regex",
-      "description": "longboat, CI only: build-macos installs it for its sdk109, the 10.9 SDK the go126 cross toolchain's cgo wrapper compiles against. Nothing of it ships, so a bump re-runs CI and releases nothing.",
-      "managerFilePatterns": [
-        "/^components/longboat/version$/"
-      ],
-      "matchStrings": ["^(?<currentValue>\\S+)\\s*$"],
-      "depNameTemplate": "Mavergreen/longboat",
-      "datasourceTemplate": "github-releases",
-      "versioningTemplate": "regex:^(?<major>\\d{8})\\.(?<minor>\\d+)$"
     }
   ]
 }

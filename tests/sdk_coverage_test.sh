@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: macOS-only -- drives sdk_coverage.sh, whose nm reads Mach-O symbols
+# platform: host-agnostic -- drives sdk_coverage.sh, which reads Mach-O with $NM (llvm-nm off macOS)
 # Every undefined import of the docker binary must be provided by the pinned 10.9
 # SDK stubs, or be on the weak allowlist.
 set -eu

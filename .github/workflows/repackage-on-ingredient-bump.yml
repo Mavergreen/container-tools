@@ -2,7 +2,7 @@ name: repackage-on-ingredient-bump
 on:
   push:
     branches: [main]
-    paths: ['components/**', '!components/longboat/**']
+    paths: ['components/**']
 jobs:
   repackage:
     permissions:

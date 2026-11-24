@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: macOS-only -- nm reads Mach-O symbols
+# platform: host-agnostic -- reads Mach-O symbols with $NM (default nm; llvm-nm off macOS)
 # Prove every undefined dynamic import of each binary exists in the 10.9 SDK's
 # library stubs OR is on the weak allowlist. Version-INDEPENDENT: no committed
 # per-version reference needed. Fail-closed.
@@ -29,7 +29,7 @@ find "$SDK/usr/lib" "$SDK/System/Library/Frameworks" -type f 2>/dev/null | while
     *.tbd) { tr '\n' ' ' < "$f" | grep -oE 'symbols: *\[[^]]*\]' \
              | sed "s/.*\[//; s/\]//" | tr ',' '\n' | sed "s/[ '\"]//g" | grep -v '^$'; } || : ;;
     *.h|*.hpp|*.plist|*.strings|*.modulemap|*.nib|*.png|*.a) : ;;
-    *) nm -g "$f" 2>/dev/null | awk '$1 ~ /^[0-9a-fA-F]+$/ {print $NF}' ;;
+    *) "${NM:-nm}" -g "$f" 2>/dev/null | awk '$1 ~ /^[0-9a-fA-F]+$/ {print $NF}' ;;
   esac
 done | sort -u > "$STUBSYMS"
 [ -s "$STUBSYMS" ] || mavericks_docker_die "no SDK stub symbols extracted from $SDK"
@@ -39,7 +39,7 @@ fail=0; checked=0
 for b in "$@"; do
   [ -f "$b" ] || mavericks_docker_die "missing binary $b"
   checked=$((checked+1))
-  undef=$(nm -u "$b" 2>/dev/null | awk '{print $NF}' | sort -u)
+  undef=$("${NM:-nm}" -u "$b" 2>/dev/null | awk '{print $NF}' | sort -u)
   [ -n "$undef" ] || mavericks_docker_die "no undefined symbols measured for $b"
   for s in $undef; do
     grep -qx "$s" "$STUBSYMS" && continue
