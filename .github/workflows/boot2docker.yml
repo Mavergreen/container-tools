@@ -39,10 +39,12 @@ jobs:
       #           the SAME file install@v1 already checked out for us (MavericksShipyard_DIR) into the
       #           path the include expects.
       - name: Reach shipyard's shared presets (no Linux pkg installs them)
+        # install@v1 now puts shipyard at this very prefix on Linux too (1.0.877); then there is nothing to link.
         run: |
-          sudo mkdir -p /usr/local/mavergreen/shipyard/share/cmake/MavericksShipyard
-          sudo ln -sf "$MavericksShipyard_DIR/mavericks-presets.json" \
-            /usr/local/mavergreen/shipyard/share/cmake/MavericksShipyard/mavericks-presets.json
+          presets=/usr/local/mavergreen/shipyard/share/cmake/MavericksShipyard/mavericks-presets.json
+          [ -e "$presets" ] && exit 0
+          sudo mkdir -p "$(dirname "$presets")"
+          sudo ln -s "$MavericksShipyard_DIR/mavericks-presets.json" "$presets"
       # platform: ubuntu-latest also leaves $TMPDIR unset, and the iso preset's own environment
       #           computes MAVERICKS_BUILD_ROOT from $penv{TMPDIR} the same way shipyard's hidden
       #           native/cross presets do -- so TMPDIR itself, not just MAVERICKS_BUILD_ROOT, has to
