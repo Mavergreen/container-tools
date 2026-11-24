@@ -12,13 +12,13 @@
 #
 # Usage:
 #   package_pkg.sh --out PKG --standalone-out container-tools-V-macos-x86_64.tar.gz --version V --docker BIN --compose BIN --machine BIN --iso ISO \
-#     --updater-app APP.app --bootstrap BIN --common FILE --ctl BIN --migrate BIN --menubar-app APP.app \
+#     --updater-app APP.app --bootstrap BIN --common FILE --ctl BIN --migrate BIN --menubar-app APP.app --hotplug BIN \
 #     --launch-agent PLIST [--msc-scripts DIR] [--resources DIR --welcome FILE]
 set -eu
 export COPYFILE_DISABLE=1
 
 OUT=""; ARCHIVE=""; VER=""; DOCKER=""; COMPOSE=""; MACHINE=""; LAZY=""; ISO=""; UPD_APP=""; DOCKED=""; SYNC=""
-BOOT=""; COMMON=""; CTL=""; MIGRATE=""; GETFUSION=""; MENUBAR=""; LAUNCHAGENT=""
+BOOT=""; COMMON=""; CTL=""; MIGRATE=""; GETFUSION=""; MENUBAR=""; HOTPLUG=""; LAUNCHAGENT=""
 SHIPYARD=""; RES=""; WELCOME=""; README_SA=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -40,6 +40,7 @@ while [ $# -gt 0 ]; do
     --migrate) MIGRATE="$2"; shift 2;;
     --get-fusion) GETFUSION="$2"; shift 2;;
     --menubar-app) MENUBAR="$2"; shift 2;;
+    --hotplug) HOTPLUG="$2"; shift 2;;
     --launch-agent) LAUNCHAGENT="$2"; shift 2;;
     --msc-scripts) SHIPYARD="$2"; shift 2;;
     --resources) RES="$2"; shift 2;;
@@ -49,8 +50,8 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$OUT" ] && [ -n "$ARCHIVE" ] && [ -n "$README_SA" ] && [ -n "$VER" ] && [ -n "$DOCKER" ] && [ -n "$COMPOSE" ] && [ -n "$MACHINE" ] \
   && [ -n "$LAZY" ] && [ -n "$ISO" ] && [ -n "$UPD_APP" ] && [ -n "$DOCKED" ] && [ -n "$SYNC" ] \
-  && [ -n "$BOOT" ] && [ -n "$COMMON" ] && [ -n "$CTL" ] && [ -n "$MIGRATE" ] && [ -n "$GETFUSION" ] && [ -n "$MENUBAR" ] && [ -n "$LAUNCHAGENT" ] \
-  || { echo "package_pkg: need --out --standalone-out --readme --version --docker --compose --machine --lazydocker --iso --updater-app --docked --sync-helper --bootstrap --common --ctl --migrate --get-fusion --menubar-app --launch-agent" >&2; exit 2; }
+  && [ -n "$BOOT" ] && [ -n "$COMMON" ] && [ -n "$CTL" ] && [ -n "$MIGRATE" ] && [ -n "$GETFUSION" ] && [ -n "$MENUBAR" ] && [ -n "$HOTPLUG" ] && [ -n "$LAUNCHAGENT" ] \
+  || { echo "package_pkg: need --out --standalone-out --readme --version --docker --compose --machine --lazydocker --iso --updater-app --docked --sync-helper --bootstrap --common --ctl --migrate --get-fusion --menubar-app --hotplug --launch-agent" >&2; exit 2; }
 if [ -z "$SHIPYARD" ]; then
   # --msc-scripts wins when given; otherwise msc.sh takes $SHIPYARD_SCRIPTS (install@v1 exports it in
   # CI) or asks shipyard-cmake where find_package(MavericksShipyard) lands, and exits if neither works.
@@ -86,6 +87,7 @@ install -m 0755 "$CTL"     "$T/bin/docker-machine-ctl"
 install -m 0755 "$MIGRATE" "$T/bin/docker-machine-migrate"
 install -m 0755 "$GETFUSION" "$T/bin/container-tools-get-fusion"
 install -m 0644 "$COMMON"  "$T/libexec/docker-machine-common.sh"
+install -m 0755 "$HOTPLUG" "$T/libexec/container-tools-hotplug"   # ctl resize's live hot-add
 install -m 0755 "$COMPOSE" "$T/lib/docker/cli-plugins/docker-compose"
 ln -s ../lib/docker/cli-plugins/docker-compose "$T/bin/docker-compose"
 install -m 0644 "$ISO"     "$T/share/boot2docker.iso"

@@ -249,6 +249,7 @@ jobs:
           mkdir -p apps
           cp -R "$RUNNER_TEMP/apps/container-tools-updater/container-tools-updater.app" apps/
           cp -R "$RUNNER_TEMP/apps/container-tools-menubar/DockerMenu.app" apps/
+          cp "$RUNNER_TEMP/apps/container-tools-hotplug/container-tools-hotplug" apps/
           tar -C apps -czf apps.tgz .   # one tarball, so the Mach-Os keep their executable bits
       - name: Upload the apps (packaging runs only)
         if: needs.ver.outputs.package == 'true'
@@ -411,6 +412,7 @@ jobs:
             --migrate payload/docker-machine-migrate \
             --get-fusion payload/container-tools-get-fusion \
             --menubar-app in/DockerMenu.app \
+            --hotplug in/container-tools-hotplug \
             --launch-agent payload/dev.mavergreen.container-tools-machine.plist \
             --resources cmake/resources --welcome Welcome.html
 
