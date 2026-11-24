@@ -1,7 +1,7 @@
 name: release
 
-# Build the 10.9-compatible docker toolchain (CLI + Compose + Machine) on macos-26, build the
-# boot2docker.iso on Linux, build the Sparkle updater, assemble + sign the product .pkg, and attach
+# Build the 10.9-compatible docker toolchain (CLI + Compose + Machine + lazydocker), the
+# boot2docker.iso, the apps and the .pkg, all on Linux, build the Sparkle updater, assemble + sign the product .pkg, and attach
 # the .pkg + signed appcast to a GitHub Release when a workflow_dispatch asks for one.
 #
 # Container Tools is its own upstream, versioned YYYYMMDD.N (see the ver job). Every publish is a FULL
@@ -49,7 +49,7 @@ concurrency:
 
 jobs:
   # One job decides the version and whether this run publishes; every other job reads its outputs.
-  # build-macos and build-iso once resolved the version separately and disagreed (.15 vs .14 in one
+  # build-go and build-iso once resolved the version separately and disagreed (.15 vs .14 in one
   # run), so there is exactly one place that computes it.
   #
   # Container Tools is its own upstream (INGREDIENTS.md): UPSTREAM_VERSION is the date this repo's own
@@ -93,12 +93,21 @@ jobs:
           { echo "version=$ver"; echo "publish=$publish"; echo "package=$package"; } >> "$GITHUB_OUTPUT"
           echo "version=$ver publish=$publish package=$package"
 
-  # platform: build-macos is main's required check, and GitHub counts a SKIPPED required check as
-  #           passing, so build-macos runs even when ver fails, and then fails first.
-  build-macos:
+  # The Go components (docker, compose, machine, lazydocker), cross-built for 10.9 on Linux with
+  # golang-port's Linux-hosted go126-cross (2026-11-24; until then this job ran on macos-26).
+  # platform: build-go is main's required check, and GitHub counts a SKIPPED required check as
+  #           passing, so build-go runs even when ver fails, and then fails first.
+  build-go:
     needs: ver
     if: ${{ !cancelled() }}
-    runs-on: macos-26
+    runs-on: ubuntu-latest
+    env:
+      # The compat guard and sdk_coverage read Mach-O with clang22's readers off macOS; clang22
+      # comes with go126-cross (it requires it) at its Mac prefix.
+      LIPO: /usr/local/mavergreen/clang22/bin/llvm-lipo
+      OTOOL: /usr/local/mavergreen/clang22/bin/llvm-otool
+      NM: /usr/local/mavergreen/clang22/bin/llvm-nm
+      STRINGS: /usr/local/mavergreen/clang22/bin/llvm-strings
     steps:
       - name: The ver job succeeded
         env:
@@ -108,10 +117,18 @@ jobs:
         with:
           fetch-depth: 0   # generated notes and the shipyard install expect full history
 
-      # shipyard installs itself via its own action (self-registering in the CMake user package
-      # registry); consumed thereafter via find_package. @v1 is the moving major tag (Renovate tracks it).
-      - name: Install mavericks-shipyard
+      - name: Read the Go toolchain pin
+        id: pins
+        run: echo "golang=$(tr -d '[:space:]' < components/golang/version)" >> "$GITHUB_OUTPUT"
+
+      # spec: shipyard .github/actions/install/action.yml `products` -- installs go126-cross at the pin
+      #       and, first, what it requires (clang22, recaulk and sdk109, the 10.9 SDK its cgo wrapper
+      #       compiles against), at /usr/local/mavergreen on Linux as on a Mac. Renovate bumps the pin
+      #       (components/golang/version, github-releases on Mavergreen/golang-126).
+      - name: Install mavericks-shipyard and the go126 cross toolchain
         uses: Mavergreen/shipyard/.github/actions/install@v1
+        with:
+          products: go126-cross@${{ steps.pins.outputs.golang }}
 
       - name: Record the pre-build tree
         run: sh "$SHIPYARD_SCRIPTS/assert-tree-clean.sh" --record
@@ -139,32 +156,12 @@ jobs:
           VER: ${{ needs.ver.outputs.version }}
         run: printf '%s\n' "$VER" > VERSION
 
-      # spec: golang-126 e01ed1a3e (2026-10-27): the go126 cross toolchain's cgo wrapper compiles against
-      #       Longboat's sdk109 and ships no SDK of its own. Longboat is pinned in
-      #       components/longboat/version (CI only, Renovate-tracked; repackage-on-ingredient-bump.yml
-      #       excludes it, since nothing of it ships).
-      - name: Install Longboat and its 10.9 SDK (sdk109)
-        run: |
-          lb="$(tr -d '[:space:]' < components/longboat/version)"
-          pkg="$(sh "$SHIPYARD_SCRIPTS/fetch-release-pkg.sh" longboat "$lb" "longboat-$lb.pkg" "$RUNNER_TEMP/longboat")"
-          sudo installer -pkg "$pkg" -target /
-          sudo /usr/local/mavergreen/longboat/bin/longboat sdk install 10.9
-
-      # The 10.9-correct Go toolchain (patched mavericks-golang cross .pkg; see the comment history).
-      - name: Install patched Go (mavericks-golang cross toolchain)
-        run: |
-          # Renovate bumps components/golang/version via the '# mavericks-golang' customManager in
-          # .github/renovate.json (github-releases on Mavergreen/golang-126). No pinned sha256 to
-          # hand-maintain: install_go.sh verifies against golang's own SHA256SUMS for the pinned
-          # release, and puts the toolchain where that release's build-info-cross.txt says it lives,
-          # so a bump that moves the prefix follows it instead of failing here.
-          bin="$(sh cmake/install_go.sh "$(cat components/golang/version)")"
-          echo "$bin" >> "$GITHUB_PATH"
-          echo "GO_CROSS_BIN=$bin" >> "$GITHUB_ENV"
+      - name: Put go126-cross on PATH
+        run: echo /usr/local/mavergreen/go126-cross/bin >> "$GITHUB_PATH"
 
       - name: Confirm the patched cross toolchain is on PATH
         run: |
-          test "$(command -v go)" = "$GO_CROSS_BIN/go"
+          test "$(command -v go)" = /usr/local/mavergreen/go126-cross/bin/go
           go version
 
       - name: Cache the MacOSX10.9 SDK
@@ -191,18 +188,17 @@ jobs:
       - name: Stage + upload packaging inputs
         if: needs.ver.outputs.package == 'true'
         run: |
-          export COPYFILE_DISABLE=1
           CROSS="$CROSS_BUILD_DIR"
           mkdir -p stage
           cp "$CROSS/docker-cli/docker"            stage/docker
           cp "$CROSS/docker-compose/docker-compose" stage/docker-compose
           cp "$CROSS/docker-machine/docker-machine" stage/docker-machine
           cp "$CROSS/lazydocker/lazydocker"        stage/lazydocker
-          find stage -name '._*' -delete 2>/dev/null || true
           tar -C stage -czf packaging-inputs.tgz .
           # Record what THIS job built from. The .pkg is assembled from two independent jobs -- these
           # binaries and an iso built on Linux -- so the risk worth catching is them coming from
           # different commits (a re-run, a stale artifact). Conformance compares the records.
+          # build-info-macos.txt names the darwin binaries it records, not the host that built them.
           sh "$SHIPYARD_SCRIPTS/build-info.sh" build-info-macos.txt \
             variant=macos commit="$GITHUB_SHA" version="${{ needs.ver.outputs.version }}" \
             docker_cli="$(sed -n 's/^REF=//p' components/docker-cli/version)" \
@@ -261,11 +257,11 @@ jobs:
           name: apps
           path: apps.tgz
 
-  # boot2docker.iso on native Linux/Docker (macos-26 can't build it). We only BUILD the iso here for the
+  # boot2docker.iso on native Linux/Docker. We only BUILD the iso here for the
   # .pkg; the source is digest-verified at clone time (clone_pinned.sh in the boot2docker DOWNLOAD_COMMAND
   # bails unless the checkout is the pinned commit). boot2docker.yml is the CI gate on bump PRs; runtime
   # issues in a shipped iso are fixed in a same-date .(N+1) repackage. Runs only when this run
-  # publishes, and needs only ver (not build-macos), so it keeps running in parallel with build-macos.
+  # publishes, and needs only ver (not build-go), so it keeps running in parallel with build-go.
   build-iso:
     needs: ver
     if: needs.ver.outputs.package == 'true'
@@ -284,7 +280,7 @@ jobs:
       #           too even though iso inherits nothing from it (verified against this repo's
       #           boot2docker.yml, the same job shape on the same runner OS). Symlink the SAME file
       #           install@v1 already checked out for us (MavericksShipyard_DIR) into the path the
-      #           include expects, so this job can keep using --preset like build-macos does.
+      #           include expects, so this job can keep using --preset like build-go does.
       - name: Reach shipyard's shared presets (no Linux pkg installs them)
         run: |
           sudo mkdir -p /usr/local/mavergreen/shipyard/share/cmake/MavericksShipyard
@@ -301,7 +297,7 @@ jobs:
       - name: Derive the iso build directory
         run: echo "ISO_BUILD_DIR=${TMPDIR:-/tmp}/mm-build/$(basename "$PWD")-iso" >> "$GITHUB_ENV"
 
-      # The same version build-macos writes, from the same ver job, BEFORE configuring -- so one .pkg
+      # The same version build-go writes, from the same ver job, BEFORE configuring -- so one .pkg
       # is never built from two versions.
       - name: Write the version this run builds
         env:
@@ -313,7 +309,7 @@ jobs:
           cmake --preset iso
           cmake --build --preset iso
           ISO_DIR="$ISO_BUILD_DIR/boot2docker"
-          # The other half of the record (see build-macos): same commit, plus the iso's own pins.
+          # The other half of the record (see build-go): same commit, plus the iso's own pins.
           sh "$SHIPYARD_SCRIPTS/build-info.sh" build-info-iso.txt \
             variant=iso commit="$GITHUB_SHA" version="$(cat VERSION)" \
             boot2docker="$(sed -n 's/^REF=//p' components/boot2docker/version)" \
@@ -331,10 +327,10 @@ jobs:
           path: ${{ env.ISO_BUILD_DIR }}/boot2docker/*
 
   # Assemble the product .pkg (signed, with its appcast, when publishing; unsigned on a pull request).
-  # Needs the mac binaries/updater and the iso; runs on macos-26 for pkgbuild/productbuild.
+  # Needs the darwin binaries, the apps and the iso; stevedore builds the .pkg on Linux.
   package:
     if: needs.ver.outputs.package == 'true'
-    needs: [ver, build-macos, build-apps, build-iso]
+    needs: [ver, build-go, build-apps, build-iso]
     # Linux: shipyard's packaging, signing and conformance seams are host-agnostic (stevedore), and
     # clang22's llvm tools read the Mach-Os.
     runs-on: ubuntu-latest
@@ -356,7 +352,7 @@ jobs:
           CL="$(sh cmake/fetch-clang22.sh)"
           { echo "LIPO=$CL/bin/llvm-lipo"; echo "OTOOL=$CL/bin/llvm-otool"; echo "NM=$CL/bin/llvm-nm"; echo "STRINGS=$CL/bin/llvm-strings"; } >> "$GITHUB_ENV"
 
-      # This job's checkout is fresh (a separate runner from build-macos), so it has no VERSION file.
+      # This job's checkout is fresh (a separate runner from build-go), so it has no VERSION file.
       # Use the authoritative version the ver job decided (needs.ver.outputs.version), not
       # `cat VERSION`. This repo is its own upstream, so its version string doubles as the release tag.
       #
@@ -512,7 +508,7 @@ jobs:
   # piece of the signing key. shipyard's publish-release.yml looks for this job's record on any signed
   # release; it cannot run the scan itself (reading job logs needs actions: read).
   scan:
-    needs: [ver, build-macos, package]
+    needs: [ver, build-go, package]
     if: always() && (needs.ver.outputs.publish == 'true')   # a build that fails after signing left logs too; scan them
     permissions:
       actions: read     # this run's job logs
@@ -529,7 +525,7 @@ jobs:
   # repackage needs since a GITHUB_TOKEN-pushed tag triggers nothing.
   publish:
     if: needs.ver.outputs.publish == 'true'
-    needs: [ver, build-macos, build-apps, package, scan, on-mavericks]
+    needs: [ver, build-go, build-apps, package, scan, on-mavericks]
     permissions:
       contents: write
     uses: Mavergreen/shipyard/.github/workflows/publish-release.yml@v1
