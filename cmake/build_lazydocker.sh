@@ -10,6 +10,10 @@ mkdir -p "$OUT"
 cd "$SRC"
 unset CC
 export CGO_ENABLED=1 GOARCH=amd64 GOTOOLCHAIN=local
-"$GO" build -ldflags "-linkmode=external -X main.version=${REF#v}" -o "$OUT/lazydocker" .
+# Reproducible across hosts: -trimpath keeps host paths out of what Go stamps, and the prefix maps
+# keep them out of cgo's C debug info (both spellings of the work dir; CGO_CFLAGS replaces Go's
+# default -O2 -g, so that stays).
+export CGO_CFLAGS="-O2 -g -ffile-prefix-map=$PWD=/src -ffile-prefix-map=$(pwd -P)=/src"
+"$GO" build -trimpath -ldflags "-linkmode=external -X main.version=${REF#v}" -o "$OUT/lazydocker" .
 [ -f "$OUT/lazydocker" ] || { echo "no lazydocker binary produced" >&2; exit 1; }
 echo "lazydocker: $OUT/lazydocker"
