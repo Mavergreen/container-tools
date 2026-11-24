@@ -32,7 +32,7 @@ setup() {
 echo "dm \$*" >> "$G/calls"
 case "\$1" in
   status) cat "$G/status" ;;
-  stop)   echo Stopped > "$G/status" ;;
+  stop)   echo Stopped > "$G/status"; rm -f "$G/vmx-alive" ;;
   start)  echo Running > "$G/status" ;;
   ssh)    shift 2
           case "\$*" in
@@ -98,6 +98,61 @@ case_live_cap_from_small_boot() {
   setup; boot_log 4096; sed 's/^memsize = .*/memsize = "4096"/' "$VMX" > "$VMX.t" && cat "$VMX.t" > "$VMX"
   run --memory 8192 || fail "a VM that booted at 4 GB grows live past it (out: $(out))"
   grep -q '^hotplug --memory 8192$' "$G/calls" || fail "live (calls: $(cat "$G/calls"))"
+  teardown
+}
+
+# Review fixes (2026-11-24).
+# I-1: VMware paused the VM for host disk (docker-machine status flaps, ssh hangs): refuse up front.
+#      And "running" is the vmx process, never docker-machine's flapping status: never write a live VM's vmx.
+case_paused_for_host_disk() {
+  setup
+  printf '%s.000-05:00| vmx| I125: Msg_Question: msg.hbacommon.outofspace\n' "$(date '+%Y-%m-%dT%H:%M:%S')" > "$(dirname "$VMX")/vmware.log"
+  run --memory 2048 --restart && fail "a VM paused for host disk can't be resized"
+  out | grep -qi 'disk' || fail "says the Mac's disk is full (out: $(out))"
+  no_change_calls || fail "changes nothing"
+  [ "$(vmx_size)" = 1024/1 ] || fail "the vmx is untouched (got $(vmx_size))"
+  teardown
+}
+case_status_flaps_but_vmx_alive() {
+  setup; : > "$G/vmx-alive"; echo Stopped > "$G/status"   # the vmx is up, but docker-machine says Stopped
+  printf '#!/bin/sh\n[ -e "%s/vmx-alive" ] && echo 4242 || exit 1\n' "$G" > "$BIN/pgrep"
+  run --memory 512 --restart
+  grep -q '^dm stop' "$G/calls" || [ "$(vmx_size)" = 1024/1 ] || fail "a running vmx's .vmx must never be rewritten without stopping it (got $(vmx_size), calls: $(cat "$G/calls"))"
+  teardown
+}
+# I-2: a suspended VM resumes against the vmx it was suspended with: never rewrite it.
+case_suspended_vm() {
+  setup; echo Stopped > "$G/status"; echo 'checkpoint.vmState = "container-tools-1.vmss"' >> "$VMX"
+  run --memory 2048 --restart && fail "a suspended VM can't be resized"
+  out | grep -qi suspended || fail "says it's suspended (out: $(out))"
+  no_change_calls || fail "changes nothing"
+  [ "$(vmx_size)" = 1024/1 ] || fail "the vmx is untouched (got $(vmx_size))"
+  teardown
+}
+# I-3: the marker is missing because the VM boots an old image: a restart won't fix that, an image upgrade will.
+case_stale_image_says_upgrade() {
+  setup; rm -f "$G/marker"
+  export MAVERICKS_DOCKER_ISO="$WORK/new.iso"; echo new > "$MAVERICKS_DOCKER_ISO"; echo old > "$(dirname "$VMX")/boot2docker.iso"
+  run --memory 2048 && fail "can't grow live on an old image"
+  out | grep -q 'image-upgrade' || fail "points at image-upgrade, not just a restart (out: $(out))"
+  no_change_calls || fail "changes nothing"
+  teardown
+}
+# I-4: a grow that Fusion took but the guest never showed leaves the vmx at the new size: asking again
+#      must not report "already" while the guest is short.
+case_retry_after_guest_never_showed() {
+  setup; : > "$G/lazy"
+  MAVERICKS_DOCKER_RESIZE_WAIT=2 run --memory 2048 && fail "first try: the guest never showed it"
+  sed 's/^memsize = .*/memsize = "2048"/' "$VMX" > "$VMX.t" && cat "$VMX.t" > "$VMX"   # what Fusion did to the vmx
+  run --memory 2048 && fail "the retry must not call it done while the guest shows 1 GB"
+  out | grep -qi already && fail "not 'already' (out: $(out))"
+  out | grep -q -- --restart || fail "says a restart applies it (out: $(out))"
+  teardown
+}
+# M-5 (re-graded): a memory-only grow is judged on memory; a CPU shortfall it didn't ask about is not its failure.
+case_memory_grow_ignores_cpu_shortfall() {
+  setup; sed 's/^numvcpus = .*/numvcpus = "2"/' "$VMX" > "$VMX.t" && cat "$VMX.t" > "$VMX"   # guest still shows 1 CPU
+  MAVERICKS_DOCKER_RESIZE_WAIT=2 run --memory 2048 || fail "memory grew; an old CPU shortfall doesn't fail it (out: $(out))"
   teardown
 }
 
@@ -241,4 +296,10 @@ case_no_room
 case_guest_never_sees_it
 case_helper_fails
 case_busy
+case_paused_for_host_disk
+case_status_flaps_but_vmx_alive
+case_suspended_vm
+case_stale_image_says_upgrade
+case_retry_after_guest_never_showed
+case_memory_grow_ignores_cpu_shortfall
 echo "docker_resize_test: OK"

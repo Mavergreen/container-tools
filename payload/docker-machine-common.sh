@@ -251,6 +251,7 @@ HOTPLUG=${MAVERICKS_DOCKER_HOTPLUG:-${CT_HOME:+$CT_HOME/libexec/container-tools-
 RESIZE_USAGE="usage: docker-machine-ctl resize [--memory MB] [--cpus N] [--restart]"
 HOTPLUG_MARKER=/etc/udev/rules.d/99-mavergreen-cpu-online.rules   # in an ISO whose kernel can take a hot-add
 _pos_int() { case "$1" in ''|*[!0-9]*) return 1 ;; esac; [ "$1" -gt 0 ]; }
+_vmx_suspended() { grep -q '^checkpoint\.vmState *= *"[^"]' "$MACHDIR/$MACHINE/$MACHINE.vmx" 2>/dev/null; }
 _vmx_value() { sed -n "s/^$1 *= *\"\\([0-9]*\\)\".*/\\1/p" "$MACHDIR/$MACHINE/$MACHINE.vmx" 2>/dev/null | head -1; }
 # The memory the running VM booted with: vmware.log starts afresh at each power-on, and its first
 # DICT memsize is that size (a hot-add rewrites the .vmx's, not this). Empty when unknown.
@@ -260,8 +261,9 @@ _boot_memsize() { sed -n 's/.*DICT  *memsize = "\([0-9]*\)".*/\1/p' "$MACHDIR/$M
 LIVE_SMALL_BOOT_MAX_MB=3072
 # The guest's MemTotal (kB), then its online CPUs, one per line.
 _guest_size() { docker-machine ssh "$MACHINE" "awk '/^MemTotal:/ { print \$2 }' /proc/meminfo; grep -c ^processor /proc/cpuinfo" 2>/dev/null; }
-_set_vmx_size() { # MB CPUS
+_set_vmx_size() { # MB CPUS -- only for a VM that is neither running nor suspended
   _sv_vmx="$MACHDIR/$MACHINE/$MACHINE.vmx"; _sv_tmp="$_sv_vmx.ct-tmp"
+  [ -z "$(vmx_pid)" ] && ! _vmx_suspended || return 1
   { awk '!/^memsize *=/ && !/^numvcpus *=/' "$_sv_vmx"; printf 'memsize = "%s"\nnumvcpus = "%s"\n' "$1" "$2"; } > "$_sv_tmp" \
     && cat "$_sv_tmp" > "$_sv_vmx"   # cat keeps its mode
   rm -f "$_sv_tmp"
@@ -290,6 +292,11 @@ resize_vm() { # [--memory MB] [--cpus N] [--restart]
   return $_rz_rc
 }
 _resize() {
+  # VMware paused the VM for host disk: docker-machine's status flaps and ssh hangs, so ask nothing.
+  if host_disk_full; then echo "This Mac's disk is full, so VMware paused the Docker VM; free some space first."; return 1; fi
+  _running=no; [ -n "$(vmx_pid)" ] && _running=yes   # the vmx process, not docker-machine's flapping status
+  if [ "$_running" = no ] && _vmx_suspended; then
+    echo "Docker's VM is suspended; start it first (docker-machine-ctl start), then resize."; return 1; fi
   _om=$(_vmx_value memsize); _oc=$(_vmx_value numvcpus)
   _pos_int "$_om" && _pos_int "$_oc" || { echo "Can't read the Docker VM's size from $MACHDIR/$MACHINE/$MACHINE.vmx."; return 1; }
   _nm=${_rz_mem:-$_om}; _nc=${_rz_cpu:-$_oc}
@@ -301,17 +308,28 @@ _resize() {
   _host_c=$(sysctl -n hw.logicalcpu 2>/dev/null)
   if _pos_int "$_host_c" && [ "$_nc" -gt "$_host_c" ]; then
     echo "This Mac has $_host_c CPUs; the VM can't have more."; return 1; fi
-  if [ "$_nm" -eq "$_om" ] && [ "$_nc" -eq "$_oc" ]; then
-    echo "Docker already has $_nm MB and $_nc CPUs."; resource_status; return 0; fi
-
-  _running=no; [ "$(machine_status)" = Running ] && _running=yes
   _why=
-  if [ "$_nm" -lt "$_om" ] || [ "$_nc" -lt "$_oc" ]; then
+  if [ "$_nm" -eq "$_om" ] && [ "$_nc" -eq "$_oc" ]; then
+    # Fusion writes the new size into the .vmx on a hot-add, so a grow the guest never showed leaves
+    # the .vmx right and the guest short: only "already" when the running guest agrees.
+    _g=$( [ "$_running" = yes ] && _guest_size ); _gm=$(echo "$_g" | sed -n 1p); _gc=$(echo "$_g" | sed -n 2p)
+    if _pos_int "$_gm" && _pos_int "$_gc" && { [ "$_gm" -lt $(( _nm * 1024 * 9 / 10 )) ] || [ "$_gc" -lt "$_nc" ]; }; then
+      _why="The VM is set to $_nm MB and $_nc CPUs but shows less; a restart applies it"
+    else
+      echo "Docker already has $_nm MB and $_nc CPUs."; resource_status; return 0
+    fi
+  elif [ "$_nm" -lt "$_om" ] || [ "$_nc" -lt "$_oc" ]; then
     _why="Shrinking needs a restart, which stops running containers"
   elif [ "$_running" = no ]; then
     _why="Docker isn't running, so the VM can't grow live"
-  elif ! vmx_allows_hotadd || ! docker-machine ssh "$MACHINE" test -f "$HOTPLUG_MARKER" >/dev/null 2>&1; then
+  elif ! vmx_allows_hotadd; then
     _why="This VM can grow live only after Docker has restarted once on this version"
+  elif ! docker-machine ssh "$MACHINE" test -f "$HOTPLUG_MARKER" >/dev/null 2>&1; then
+    if [ "$(image_status)" = stale ]; then
+      _why="This VM boots an older Container Tools image that can't grow live (docker-machine-ctl image-upgrade updates it)"
+    else
+      _why="This VM can grow live only after Docker has restarted once on this version"
+    fi
   elif [ "$_nm" -gt "$LIVE_SMALL_BOOT_MAX_MB" ] && _bt=$(_boot_memsize) && _pos_int "$_bt" \
        && [ "$_bt" -lt "$LIVE_SMALL_BOOT_MAX_MB" ]; then
     _why="VMware grows a VM that started with less than 3 GB only up to 3 GB while it runs"
@@ -327,7 +345,7 @@ _resize() {
       _i=0; while [ -n "$(vmx_pid)" ] && [ "$_i" -lt 120 ]; do sleep 1; _i=$(( _i + 1 )); done
       [ -z "$(vmx_pid)" ] || { log "resize: the VM didn't stop"; echo "The VM didn't stop; its size was not changed."; return 1; }
     fi
-    _set_vmx_size "$_nm" "$_nc"
+    _set_vmx_size "$_nm" "$_nc" || { echo "The VM is still running or suspended; its size was not changed."; return 1; }
     if user_stopped; then
       echo "Set to $_nm MB and $_nc CPUs; Docker stays stopped, as you left it."; resource_status; return 0; fi
     machine_start >>"$LOG" 2>&1 || true
@@ -351,7 +369,9 @@ _resize() {
   _want=$(( _bm + (_nm - _om) * 1024 * 9 / 10 )); _wait=${MAVERICKS_DOCKER_RESIZE_WAIT:-60}; _i=0
   while :; do
     _g=$(_guest_size); _gm=$(echo "$_g" | sed -n 1p); _gc=$(echo "$_g" | sed -n 2p)
-    if _pos_int "$_gm" && _pos_int "$_gc" && [ "$_gm" -ge "$_want" ] && [ "$_gc" -ge "$_nc" ]; then break; fi
+    # Judge only what was asked: an old CPU shortfall doesn't fail a memory grow, nor the reverse.
+    if _pos_int "$_gm" && _pos_int "$_gc" && { [ "$_nm" -le "$_om" ] || [ "$_gm" -ge "$_want" ]; } \
+       && { [ "$_nc" -le "$_oc" ] || [ "$_gc" -ge "$_nc" ]; }; then break; fi
     _i=$(( _i + 1 )); [ "$_i" -lt "$_wait" ] || {
       log "resize: the guest still shows ${_gm:-?} kB, ${_gc:-?} CPUs after ${_wait}s"
       echo "Fusion accepted the change, but the VM didn't show it within ${_wait}s; see docker-machine-ctl diagnostics."; return 1; }
