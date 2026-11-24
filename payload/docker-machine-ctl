@@ -77,6 +77,7 @@ case "${1:-}" in
   # Enlarge the VM's disk in place (see enlarge_disk); the plan says what would happen, or why not.
   enlarge-disk-plan) enlarge_plan "${2:-}" ;;
   enlarge-disk) enlarge_disk "${2:-}" ;;
+  resize) shift; resize_vm "$@"; exit $? ;;
   # Readiness v1 (see readiness_state in docker-machine-common.sh): exit 0 only when Docker answers.
   readiness-version) echo "$READINESS_VERSION" ;;
   readiness|ensure-ready)
@@ -91,5 +92,5 @@ case "${1:-}" in
   migrate) exec docker-machine-migrate ;;
   vmx-pid) vmx_pid ;;
   overview-status) overview_status "${2:-}" ;;
-  *) echo "usage: docker-machine-ctl {status|start|stop|restart|image-status|image-upgrade|resource-status|disk-status|reclaimable|free-space|auto-free|disk-advice|enlarge-disk-plan|enlarge-disk [GB]|readiness|ensure-ready|repair|diagnostics|readiness-version|login-status|login-on|login-off|setup|migrate|vmx-pid|overview-status [--full]}" >&2; exit 2 ;;
+  *) echo "usage: docker-machine-ctl {status|start|stop|restart|image-status|image-upgrade|resource-status|disk-status|reclaimable|free-space|auto-free|disk-advice|enlarge-disk-plan|enlarge-disk [GB]|resize [--memory MB] [--cpus N] [--restart]|readiness|ensure-ready|repair|diagnostics|readiness-version|login-status|login-on|login-off|setup|migrate|vmx-pid|overview-status [--full]}" >&2; exit 2 ;;
 esac

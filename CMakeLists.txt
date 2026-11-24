@@ -282,7 +282,7 @@ add_test(NAME sdk_coverage_test
   COMMAND sh "${CMAKE_SOURCE_DIR}/tests/sdk_coverage_test.sh" "${DOCKER_BIN}"
              "${MavericksShipyard_SCRIPTS}/fetch_sdk.sh")
 # Self-contained (no built binary needed).
-foreach(t scaffold_test renovate_test hotplug_source_test docker_compose_test go_toolchain_pinned_test go_reproducible_test docked_test relocatable_test docker_machine_patches_test docker_common_test docker_ctl_test docker_sync_image_test docker_menubar_test docker_plugin_dir_test postinstall_hook_test)
+foreach(t scaffold_test renovate_test hotplug_source_test docker_resize_test docker_compose_test go_toolchain_pinned_test go_reproducible_test docked_test relocatable_test docker_machine_patches_test docker_common_test docker_ctl_test docker_sync_image_test docker_menubar_test docker_plugin_dir_test postinstall_hook_test)
   add_test(NAME ${t} COMMAND sh "${CMAKE_SOURCE_DIR}/tests/${t}.sh")
 endforeach()
 # These need the Mac's own userland (BSD stat -f, sed -i ''). Off macOS (the Linux build job) they

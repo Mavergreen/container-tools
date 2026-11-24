@@ -241,6 +241,118 @@ _status_from() { # docker-machine status
 BOOT_REFUSED="$STATE_DIR/boot-refused"   # the login agent refused to boot: the Mac lacks room (GB needed)
 clear_boot_refused() { rm -f "$BOOT_REFUSED" 2>/dev/null || true; }
 
+# Resize the VM: docker-machine-ctl resize [--memory MB] [--cpus N] [--restart]. A grow of a running
+# VM that is ready for it happens live, through VMware's hot-add (libexec/container-tools-hotplug):
+# Fusion pauses the VM for a few seconds and running containers carry on. Anything else -- a shrink
+# (Fusion can't take memory away live), a stopped VM, or one not yet ready to hot-add (its .vmx or its
+# guest kernel predate it) -- takes a restart, which stops running containers, so it happens only
+# with --restart. Self-sizing calls this too (design, 2026-11-24).
+HOTPLUG=${MAVERICKS_DOCKER_HOTPLUG:-${CT_HOME:+$CT_HOME/libexec/container-tools-hotplug}}
+RESIZE_USAGE="usage: docker-machine-ctl resize [--memory MB] [--cpus N] [--restart]"
+HOTPLUG_MARKER=/etc/udev/rules.d/99-mavergreen-cpu-online.rules   # in an ISO whose kernel can take a hot-add
+_pos_int() { case "$1" in ''|*[!0-9]*) return 1 ;; esac; [ "$1" -gt 0 ]; }
+_vmx_value() { sed -n "s/^$1 *= *\"\\([0-9]*\\)\".*/\\1/p" "$MACHDIR/$MACHINE/$MACHINE.vmx" 2>/dev/null | head -1; }
+# The guest's MemTotal (kB), then its online CPUs, one per line.
+_guest_size() { docker-machine ssh "$MACHINE" "awk '/^MemTotal:/ { print \$2 }' /proc/meminfo; grep -c ^processor /proc/cpuinfo" 2>/dev/null; }
+_set_vmx_size() { # MB CPUS
+  _sv_vmx="$MACHDIR/$MACHINE/$MACHINE.vmx"; _sv_tmp="$_sv_vmx.ct-tmp"
+  { awk '!/^memsize *=/ && !/^numvcpus *=/' "$_sv_vmx"; printf 'memsize = "%s"\nnumvcpus = "%s"\n' "$1" "$2"; } > "$_sv_tmp" \
+    && cat "$_sv_tmp" > "$_sv_vmx"   # cat keeps its mode
+  rm -f "$_sv_tmp"
+}
+_room_for() { # KB needed, KB the change frees first -- or say what's short and fail
+  _rf_avail=$(df -k "$MACHDIR" 2>/dev/null | awk 'NR == 2 { print $4 }')
+  _pos_int "$_rf_avail" || return 0   # can't tell: don't block
+  [ $(( _rf_avail + $2 )) -ge "$1" ] && return 0
+  echo "That needs about $(( ($1 + 1048575) / 1048576 )) GB free on this Mac; $(( _rf_avail / 1048576 )) GB free now."
+  return 1
+}
+resize_vm() { # [--memory MB] [--cpus N] [--restart]
+  _rz_mem=; _rz_cpu=; _rz_restart=no
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --memory|--cpus) [ $# -ge 2 ] || { echo "$RESIZE_USAGE"; return 1; }
+                       if [ "$1" = --memory ]; then _rz_mem=$2; else _rz_cpu=$2; fi; shift 2 ;;
+      --restart) _rz_restart=yes; shift ;;
+      *) echo "$RESIZE_USAGE"; return 1 ;;
+    esac
+  done
+  [ -n "$_rz_mem$_rz_cpu" ] || { echo "$RESIZE_USAGE"; return 1; }
+  op_try_begin resize || { echo "Another Docker operation is running; try again when it finishes."; return 1; }
+  _rz_rc=0; _resize || _rz_rc=$?
+  op_end
+  return $_rz_rc
+}
+_resize() {
+  _om=$(_vmx_value memsize); _oc=$(_vmx_value numvcpus)
+  _pos_int "$_om" && _pos_int "$_oc" || { echo "Can't read the Docker VM's size from $MACHDIR/$MACHINE/$MACHINE.vmx."; return 1; }
+  _nm=${_rz_mem:-$_om}; _nc=${_rz_cpu:-$_oc}
+  _pos_int "$_nm" && [ $(( _nm % 4 )) -eq 0 ] || { echo "Memory must be a whole number of MB, a multiple of 4."; return 1; }
+  _pos_int "$_nc" || { echo "CPUs must be a whole number, at least 1."; return 1; }
+  _host_b=$(sysctl -n hw.memsize 2>/dev/null)
+  if _pos_int "$_host_b" && [ "$_nm" -gt $(( _host_b / 1048576 )) ]; then
+    echo "This Mac has $(( _host_b / 1048576 )) MB of memory; the VM can't have more."; return 1; fi
+  _host_c=$(sysctl -n hw.logicalcpu 2>/dev/null)
+  if _pos_int "$_host_c" && [ "$_nc" -gt "$_host_c" ]; then
+    echo "This Mac has $_host_c CPUs; the VM can't have more."; return 1; fi
+  if [ "$_nm" -eq "$_om" ] && [ "$_nc" -eq "$_oc" ]; then
+    echo "Docker already has $_nm MB and $_nc CPUs."; resource_status; return 0; fi
+
+  _running=no; [ "$(machine_status)" = Running ] && _running=yes
+  _why=
+  if [ "$_nm" -lt "$_om" ] || [ "$_nc" -lt "$_oc" ]; then
+    _why="Shrinking needs a restart, which stops running containers"
+  elif [ "$_running" = no ]; then
+    _why="Docker isn't running, so the VM can't grow live"
+  elif ! vmx_allows_hotadd || ! docker-machine ssh "$MACHINE" test -f "$HOTPLUG_MARKER" >/dev/null 2>&1; then
+    _why="This VM can grow live only after Docker has restarted once on this version"
+  fi
+
+  if [ -n "$_why" ]; then   # a restart change
+    if [ "$_rz_restart" != yes ]; then echo "$_why; run again with --restart."; return 1; fi
+    _freed=0; [ "$_running" = yes ] && _freed=$(( _om * 1024 ))
+    _room_for $(( _nm * 1024 + 4 * 1048576 )) "$_freed" || return 1
+    log "resize: $_om MB, $_oc CPUs -> $_nm MB, $_nc CPUs, by restart"
+    if [ "$_running" = yes ]; then
+      docker-machine stop "$MACHINE" >>"$LOG" 2>&1 || true
+      _i=0; while [ -n "$(vmx_pid)" ] && [ "$_i" -lt 120 ]; do sleep 1; _i=$(( _i + 1 )); done
+      [ -z "$(vmx_pid)" ] || { log "resize: the VM didn't stop"; echo "The VM didn't stop; its size was not changed."; return 1; }
+    fi
+    _set_vmx_size "$_nm" "$_nc"
+    if user_stopped; then
+      echo "Set to $_nm MB and $_nc CPUs; Docker stays stopped, as you left it."; resource_status; return 0; fi
+    machine_start >>"$LOG" 2>&1 || true
+    [ "$(machine_status)" = Running ] || { log "resize: the VM didn't come back up"; echo "The VM didn't come back up; see docker-machine-ctl diagnostics."; return 1; }
+    sync_context
+    resource_status; return 0
+  fi
+
+  # Live: Fusion grows the vmx and the running guest; check the guest really shows it.
+  [ -n "$HOTPLUG" ] && [ -x "$HOTPLUG" ] || { echo "The hot-add helper is missing (${HOTPLUG:-container-tools-hotplug})."; return 1; }
+  if [ "$_nm" -gt "$_om" ]; then _room_for $(( (_nm - _om) * 1024 + 4 * 1048576 )) 0 || return 1; fi
+  _before=$(_guest_size); _bm=$(echo "$_before" | sed -n 1p)
+  _pos_int "$_bm" || { echo "Can't read the running VM's memory, so a hot-add couldn't be checked; nothing was changed."; return 1; }
+  log "resize: $_om MB, $_oc CPUs -> $_nm MB, $_nc CPUs, live"
+  if [ "$_nm" -gt "$_om" ]; then
+    _e=$("$HOTPLUG" "$MACHDIR/$MACHINE/$MACHINE.vmx" --memory "$_nm" 2>&1) || { log "resize: $_e"; echo "${_e:-The memory hot-add failed.}"; return 1; }
+  fi
+  if [ "$_nc" -gt "$_oc" ]; then
+    _e=$("$HOTPLUG" "$MACHDIR/$MACHINE/$MACHINE.vmx" --cpus "$_nc" 2>&1) || { log "resize: $_e"; echo "${_e:-The CPU hot-add failed.}"; return 1; }
+  fi
+  _want=$(( _bm + (_nm - _om) * 1024 * 9 / 10 )); _wait=${MAVERICKS_DOCKER_RESIZE_WAIT:-60}; _i=0
+  while :; do
+    _g=$(_guest_size); _gm=$(echo "$_g" | sed -n 1p); _gc=$(echo "$_g" | sed -n 2p)
+    if _pos_int "$_gm" && _pos_int "$_gc" && [ "$_gm" -ge "$_want" ] && [ "$_gc" -ge "$_nc" ]; then break; fi
+    _i=$(( _i + 1 )); [ "$_i" -lt "$_wait" ] || {
+      log "resize: the guest still shows ${_gm:-?} kB, ${_gc:-?} CPUs after ${_wait}s"
+      echo "Fusion accepted the change, but the VM didn't show it within ${_wait}s; see docker-machine-ctl diagnostics."; return 1; }
+    sleep 1
+  done
+  sync_context
+  log "resize: the guest shows $_gm kB, $_gc CPUs"
+  resource_status
+}
+
 # The VM's disk, for the menu: "<total KB> <used KB> <avail KB> ok|low", or "unknown" when the VM is
 # not running or df can't be read. Docker's data lives on /mnt/sda1. "low" is 90% used, counted the
 # way df's Capacity is (used / (used + avail)). The disk filled silently once (2026-09-24: Linux
