@@ -1,4 +1,5 @@
 #!/bin/sh
+# platform: host-agnostic
 # The VM's provider is a seam (2026-11-24): everything that knows the VM runs in VMware Fusion lives in
 # payload/vm-provider-fusion.sh, behind the vm_* functions its header lists, so another provider is
 # another file with the same functions. This holds the rest of the payload to it.
