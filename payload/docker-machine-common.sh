@@ -252,6 +252,12 @@ RESIZE_USAGE="usage: docker-machine-ctl resize [--memory MB] [--cpus N] [--resta
 HOTPLUG_MARKER=/etc/udev/rules.d/99-mavergreen-cpu-online.rules   # in an ISO whose kernel can take a hot-add
 _pos_int() { case "$1" in ''|*[!0-9]*) return 1 ;; esac; [ "$1" -gt 0 ]; }
 _vmx_value() { sed -n "s/^$1 *= *\"\\([0-9]*\\)\".*/\\1/p" "$MACHDIR/$MACHINE/$MACHINE.vmx" 2>/dev/null | head -1; }
+# The memory the running VM booted with: vmware.log starts afresh at each power-on, and its first
+# DICT memsize is that size (a hot-add rewrites the .vmx's, not this). Empty when unknown.
+_boot_memsize() { sed -n 's/.*DICT  *memsize = "\([0-9]*\)".*/\1/p' "$MACHDIR/$MACHINE/vmware.log" 2>/dev/null | head -1; }
+# Fusion grows a VM that booted with less than 3 GB only up to 3 GB live ("greater than allowed
+# maximum of 3072MB"); one booted at 4 GB grew live to 16 GB (2026-11-24).
+LIVE_SMALL_BOOT_MAX_MB=3072
 # The guest's MemTotal (kB), then its online CPUs, one per line.
 _guest_size() { docker-machine ssh "$MACHINE" "awk '/^MemTotal:/ { print \$2 }' /proc/meminfo; grep -c ^processor /proc/cpuinfo" 2>/dev/null; }
 _set_vmx_size() { # MB CPUS
@@ -306,6 +312,9 @@ _resize() {
     _why="Docker isn't running, so the VM can't grow live"
   elif ! vmx_allows_hotadd || ! docker-machine ssh "$MACHINE" test -f "$HOTPLUG_MARKER" >/dev/null 2>&1; then
     _why="This VM can grow live only after Docker has restarted once on this version"
+  elif [ "$_nm" -gt "$LIVE_SMALL_BOOT_MAX_MB" ] && _bt=$(_boot_memsize) && _pos_int "$_bt" \
+       && [ "$_bt" -lt "$LIVE_SMALL_BOOT_MAX_MB" ]; then
+    _why="VMware grows a VM that started with less than 3 GB only up to 3 GB while it runs"
   fi
 
   if [ -n "$_why" ]; then   # a restart change

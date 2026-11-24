@@ -78,6 +78,29 @@ out() { cat "$WORK/out"; }
 no_change_calls() { ! grep -q -e '^hotplug' -e '^dm stop' -e '^dm start' "$G/calls"; }
 vmx_size() { echo "$(sed -n 's/^memsize = "\(.*\)"/\1/p' "$VMX")/$(sed -n 's/^numvcpus = "\(.*\)"/\1/p' "$VMX")"; }
 
+# Fusion grows a VM that booted with less than 3 GB only up to 3 GB live ("Requested memory size
+# 6144MB is greater than allowed maximum of 3072MB"); one booted at 4 GB grew live to 16 GB (2026-11-24).
+# vmware.log's DICT memsize is the size it booted with.
+boot_log() { printf '2026-11-24T13:09:51.200-05:00| vmx| I125: DICT                   memsize = "%s"\n' "$1" > "$(dirname "$VMX")/vmware.log"; }
+case_live_cap_from_small_boot() {
+  setup; boot_log 1024
+  run --memory 3072 || fail "up to 3 GB grows live from a small boot (out: $(out))"
+  grep -q '^hotplug --memory 3072$' "$G/calls" || fail "live (calls: $(cat "$G/calls"))"
+  teardown
+  setup; boot_log 1024
+  run --memory 4096 && fail "past 3 GB from a small boot can't grow live"
+  out | grep -q -- --restart && out | grep -q '3 GB' || fail "says why and names --restart (out: $(out))"
+  no_change_calls || fail "changes nothing"
+  run --memory 4096 --restart || fail "with --restart it goes (out: $(out))"
+  grep -q '^hotplug' "$G/calls" && fail "by restart, not hot-add"
+  [ "$(vmx_size)" = 4096/1 ] || fail "size written (got $(vmx_size))"
+  teardown
+  setup; boot_log 4096; sed 's/^memsize = .*/memsize = "4096"/' "$VMX" > "$VMX.t" && cat "$VMX.t" > "$VMX"
+  run --memory 8192 || fail "a VM that booted at 4 GB grows live past it (out: $(out))"
+  grep -q '^hotplug --memory 8192$' "$G/calls" || fail "live (calls: $(cat "$G/calls"))"
+  teardown
+}
+
 case_live_grow() {
   setup
   run --memory 2048 --cpus 2 || fail "a live grow succeeds (out: $(out))"
@@ -204,6 +227,7 @@ case_busy() {
 }
 
 case_live_grow
+case_live_cap_from_small_boot
 case_no_args
 case_same_size
 case_shrink_needs_restart
