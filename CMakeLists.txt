@@ -145,7 +145,7 @@ if(MAVERICKS_DOCKER_MODE STREQUAL "iso")
   # without a shippability signal. We ship the from-source rebuild; runtime issues -> -mavericks.2.
 
   # Self-contained unit tests for the iso scripts.
-  foreach(t boot2docker_pin_test boot2docker_build_script_test boot2docker_rebase_test boot2docker_ci_test)
+  foreach(t boot2docker_pin_test boot2docker_build_script_test boot2docker_rebase_test boot2docker_ci_test boot2docker_hotplug_test)
     add_test(NAME ${t} COMMAND sh "${CMAKE_SOURCE_DIR}/tests/${t}.sh")
   endforeach()
 
