@@ -5,7 +5,7 @@ VixVM_HotPlugCPU), which Fusion applies by a hard suspend-and-resume. The guest 
 take the ACPI hot-add notifications: memory then comes online by itself
 (MEMORY_HOTPLUG_DEFAULT_ONLINE), and an added CPU arrives offline, so a udev rule onlines it. The
 rule's file is also ctl's marker that the VM booted a kernel that can take a hot-add (spike,
-2026-11-24).
+2026-11-24). PSI (/proc/pressure) is what self-sizing reads to tell the VM is short of memory or CPU.
 diff --git a/Dockerfile b/Dockerfile
 index d0a50b3..230c9f3 100644
 --- a/Dockerfile
@@ -23,11 +23,12 @@ new file mode 100644
 index 0000000..bca21bc
 --- /dev/null
 +++ b/files/kernel-config.d/mavergreen-hotplug
-@@ -0,0 +1,4 @@
+@@ -0,0 +1,5 @@
 +CONFIG_MEMORY_HOTPLUG=y
 +CONFIG_MEMORY_HOTPLUG_DEFAULT_ONLINE=y
 +CONFIG_ACPI_HOTPLUG_MEMORY=y
 +CONFIG_ACPI_HOTPLUG_CPU=y
++CONFIG_PSI=y
 diff --git a/files/udev/99-mavergreen-cpu-online.rules b/files/udev/99-mavergreen-cpu-online.rules
 new file mode 100644
 index 0000000..59ecbfe
